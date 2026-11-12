@@ -1,7 +1,7 @@
 // Çevrimdışı açılış: uygulama dosyaları önbelleğe alınır.
 // Strateji "önce ağ": bağlantı varsa her zaman güncel dosya gelir, yoksa önbellekteki açılır.
 // Yalnızca aynı kökenden GET istekleri ele alınır; API çağrılarına (Gemini, aracı) dokunulmaz.
-const ONBELLEK = "studioflow-mobil-v6";
+const ONBELLEK = "studioflow-mobil-v7";
 const DOSYALAR = [
   "./", "index.html", "app.css", "manifest.webmanifest",
   "js/app.js", "js/ag.js", "js/dom.js", "js/ayar.js", "js/hesap.js", "js/depo.js", "js/sahne.js", "js/metin.js", "js/gorsel.js",
@@ -26,7 +26,7 @@ self.addEventListener("fetch", (olay) => {
   const istek = olay.request;
   if (istek.method !== "GET" || new URL(istek.url).origin !== self.location.origin) return;
   olay.respondWith(
-    fetch(istek)
+    fetch(istek, { cache: "no-cache" })      // tarayıcı önbelleği güncellemeyi geciktirmesin
       .then((yanit) => {
         if (yanit.ok) {
           const kopya = yanit.clone();

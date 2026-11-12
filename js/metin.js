@@ -42,6 +42,13 @@ async function uret(anahtar, sistem, kullanici, json) {
     if (yanit.ok) {
       const metin = (veri?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
       if (metin.trim()) return metin;
+      // İçerik filtresi: aynı istek yeniden denense de reddedilir; kota harcamadan hemen bildirilir.
+      const bitis = veri?.candidates?.[0]?.finishReason || "";
+      const engel = veri?.promptFeedback?.blockReason || (/SAFETY|PROHIBITED|BLOCK/.test(bitis) ? bitis : "");
+      if (engel) {
+        throw new Error(`Gemini içerik filtresi bu isteği reddetti (${engel}). Bu bir kota ya da bağlantı hatası değil: `
+          + "metindeki bir ifade Google'ın filtresine takıldı. Metni değiştirip yeniden dene.");
+      }
       son = "Gemini boş yanıt döndürdü.";
       continue;
     }
@@ -105,11 +112,8 @@ const PROMPT_SISTEM =
   + "- The picture fills the whole frame edge to edge: never a border, frame, caption or panel.\n"
   + "Keep continuity across segments: same characters, wardrobe, palette, location and era; "
   + "advance the visible action with each segment.\n"
-  + "Also write video_prompt in English for each segment: an image-to-video motion prompt of 15 to "
-  + "30 words describing how that same still frame moves for a few seconds (one subject action, "
-  + "one gentle camera move, pace). It must not introduce new subjects or change the scene.\n"
   + "Reply ONLY with a JSON array. Every element must be exactly: "
-  + '{"index": <int>, "image_prompt": "<string>", "video_prompt": "<string>"}.';
+  + '{"index": <int>, "image_prompt": "<string>"}.';
 
 /**
  * Sahneler için görsel prompt'ları yazar. `sahneler`: `[{ index, metin }]` (yazılacaklar);
