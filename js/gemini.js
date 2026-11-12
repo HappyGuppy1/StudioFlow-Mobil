@@ -1,7 +1,7 @@
 // Gemini TTS: tarayıcıdan doğrudan REST çağrısı (Google bu API'de CORS'a izin verir).
 // Masaüstü StudioFlow'daki `saglayicilar/ses_gemini.py` ile aynı istek biçimi.
 import { base64Coz, dosyadanSes } from "./ses.js";
-import { zamanAsimi, zamanAsimiMi } from "./ag.js";
+import { zamanAsimi, zamanAsimiMi, geminiHatasi, hizmetIstegi, anahtarBos } from "./ag.js";
 
 const KOK = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -44,40 +44,34 @@ function sesBloklari(deger, anahtar = "") {
   return bloklar;
 }
 
-function hataMetni(durum, govde) {
-  const mesaj = govde?.error?.message || "";
-  if (durum === 429) return "Gemini kotası doldu ya da hız sınırı aşıldı (429). " + mesaj;
-  if (durum === 400 && /API key/i.test(mesaj)) return "Gemini anahtarı geçersiz. " + mesaj;
-  if (durum === 403) return "Gemini anahtarı bu model için yetkisiz (403). " + mesaj;
-  return `Gemini hatası (${durum}). ${mesaj}`.trim();
-}
-
 /** Metni seslendirir: `{ pcm: Float32Array, hiz }` (tek kanal). */
 export async function seslendir({ anahtar, model, ses, dil, stil, metin }) {
-  if (!(anahtar || "").trim()) throw new Error("Önce Ayarlar bölümüne Gemini anahtarını gir.");
+  if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
   if (!(metin || "").trim()) throw new Error("Seslendirilecek metni yaz.");
   const istem = istemKur(metin, dil, stil);
-  let adres, govde;
+  let yol, govde;
   if (model === "gemini-3.1-flash-tts-preview") {
-    adres = `${KOK}/interactions`;
+    yol = "/interactions";
     govde = { model, input: istem, store: false, response_format: { type: "audio" },
               generation_config: { speech_config: [{ voice: ses }] } };
   } else {
-    adres = `${KOK}/models/${model}:generateContent`;
+    yol = `/models/${model}:generateContent`;
     govde = { contents: [{ parts: [{ text: istem }] }], generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: ses } } } } };
   }
   let yanit;
   try {
-    yanit = await fetch(adres, { method: "POST", body: JSON.stringify(govde), signal: zamanAsimi(240_000),
-      headers: { "x-goog-api-key": anahtar.trim(), "Content-Type": "application/json" } });
+    yanit = await hizmetIstegi(anahtar, "/gemini/v1beta" + yol,
+      { adres: KOK + yol, basliklar: { "x-goog-api-key": String(anahtar).trim() } },
+      { method: "POST", body: JSON.stringify(govde), signal: zamanAsimi(240_000), headers: { "Content-Type": "application/json" } });
   } catch (hata) {
+    if (/^Kasa: /.test(hata.message)) throw hata;
     if (zamanAsimiMi(hata)) throw new Error("Gemini 4 dakikada yanıt vermedi. Biraz sonra yeniden dene; tamamlanan parçalar kayıtlı.");
     throw new Error("Gemini'ye bağlanılamadı (internet bağlantısını denetle).");
   }
   const veri = await yanit.json().catch(() => null);
-  if (!yanit.ok) throw new Error(hataMetni(yanit.status, veri));
+  if (!yanit.ok) throw geminiHatasi(yanit.status, veri);
   const bloklar = sesBloklari(veri);
   if (!bloklar.length) throw new Error("Gemini ses verisi döndürmedi; metin reddedilmiş olabilir.");
 

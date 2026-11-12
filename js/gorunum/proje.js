@@ -1,7 +1,8 @@
 // Proje ekranı: Senaryo → Sahneler → Video.
 import { h, secenekler, durumYaz, geciktir, ekranAcik, sureYaz } from "../dom.js";
 import * as depo from "../depo.js";
-import { ayar, ayarGuncelle, cloudflareHazir, ltxSpaceleri } from "../ayar.js";
+import { ayar, ayarGuncelle, ltxSpaceleri } from "../ayar.js";
+import * as havuz from "../hesap.js";
 import * as ltx from "../video_ltx.js";
 import * as gemini from "../gemini.js";
 import * as cloudflare from "../cloudflare.js";
@@ -46,6 +47,9 @@ export async function projeGorunumu(kok, id, kabuk) {
     if (oran == null) isCubugu.removeAttribute("value"); else isCubugu.value = oran;
   };
   const durduysa = () => { if (is.iptal) throw new Error("Durduruldu. Tamamlanan adımlar kaydedildi."); };
+  // Hesap havuzu: kotası biten hesap atlanır, sıradakiyle sürer; geçişler iş çubuğuna yazılır.
+  const hesapla = (hizmet) => (isi) => havuz.hesaplarla(hizmet, isi, { bildir: (mesaj) => adim(mesaj), iptal: () => is.iptal });
+  const cloudflareHazir = () => havuz.hesapVar("cloudflare") && (havuz.kasaAcik() || !!ayar.cfAraci);
 
   async function calistir(is_) {
     if (is.calisiyor) return;
@@ -80,7 +84,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     let yazilan = 0;
     adim(`Prompt'lar yazılıyor: 0 / ${liste.length}`, 0);
     await metinAI.promptlariYaz({
-      anahtar: ayar.gemini, dil: P.dil, stil: P.gorselStili,
+      anahtar: hesapla("gemini"), dil: P.dil, stil: P.gorselStili,
       tamMetin: P.sahneler.map((s) => s.metin).join(" "),
       sahneler: liste.map((s) => ({ index: sira.get(s.id), metin: s.metin })),
       onceki: P.sahneler.map((s, i) => ({ index: i + 1, prompt: s.prompt || "" }))
@@ -108,8 +112,8 @@ export async function projeGorunumu(kok, id, kabuk) {
     for (const parca of eksik) {
       durduysa();
       adim(`Seslendirme: parça ${biten + 1} / ${eksik.length}`, biten / eksik.length);
-      const ses = await gemini.seslendirDayanikli({
-        anahtar: ayar.gemini, model: P.model, ses: P.ses, dil: P.dil, stil: P.stil, metin: parca.metin });
+      const ses = await hesapla("gemini")((hesap) => gemini.seslendirDayanikli({
+        anahtar: hesap.gemini_key, model: P.model, ses: P.ses, dil: P.dil, stil: P.stil, metin: parca.metin }));
       const ornek = new Int16Array(ses.pcm.length);
       for (let i = 0; i < ornek.length; i++) ornek[i] = Math.max(-32768, Math.min(32767, Math.round(ses.pcm[i] * 32767)));
       await depo.dosyalar.yaz(depo.sesAnahtari(P.id, parca.anahtar), { veri: ornek.buffer, hiz: ses.hiz });
@@ -145,11 +149,12 @@ export async function projeGorunumu(kok, id, kabuk) {
     const zaman = zamanlama(P).sahneler.get(sahne.id);
     const sahneSuresi = zaman ? zaman.bit - zaman.bas : 0;
     const [en, boy] = P.boyut.split("x").map(Number);
-    const klip = await ltx.videoUret({
-      token: ayar.hfToken, spaceler: ltxSpaceleri(), erisim: ayar.ltxErisim || "",
-      gorsel: await ltxKaresi(kayit), prompt: sahne.hareket, dikey: en < boy,
+    const kare = await ltxKaresi(kayit);
+    const klip = await hesapla("huggingface")((hesap) => ltx.videoUret({
+      token: hesap.hf_token, spaceler: ltxSpaceleri(), erisim: ayar.ltxErisim || "",
+      gorsel: kare, prompt: sahne.hareket, dikey: en < boy,
       sure: Math.min(ltx.SURE_UST, Math.max(2, Math.ceil((sahneSuresi || 5) * 2) / 2)),
-      bildir, iptal: () => is.iptal });
+      bildir, iptal: () => is.iptal }));
     await depo.dosyalar.yaz(depo.videoAnahtari(P.id, sahne.id), { veri: await klip.arrayBuffer(), tur: "video/mp4" });
     sahne.videoVar = true;
     sahne.videoSurum = (sahne.videoSurum || 0) + 1;
@@ -172,9 +177,9 @@ export async function projeGorunumu(kok, id, kabuk) {
     const boyut = uretimBoyutu(P);
     for (let deneme = 1; ; deneme++) {
       try {
-        const blob = await cloudflare.gorselUret({
-          araci: ayar.cfAraci, hesap: ayar.cfHesap, token: ayar.cfToken,
-          model: P.gorselModel, prompt: gorselPromptu(P, sahne), ...boyut });
+        const blob = await hesapla("cloudflare")((hesap) => cloudflare.gorselUret({
+          araci: ayar.cfAraci, hesap: hesap.cf_account_id, token: hesap.cf_token,
+          model: P.gorselModel, prompt: gorselPromptu(P, sahne), ...boyut }));
         await gorselKaydet(sahne, { veri: await blob.arrayBuffer(), tur: blob.type || "image/jpeg" });
         return;
       } catch (hata) {
@@ -198,7 +203,7 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   const tumunuUret = () => calistir(async () => {
     if (!P.sahneler.length) throw new Error("Önce Senaryo sekmesinde sahneleri oluştur.");
-    if (!ayar.gemini) throw new Error("Gemini anahtarı yok: Ayarlar bölümünden gir.");
+    if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
     const ozet = [];
     const promptsuz = P.sahneler.filter((s) => !(s.prompt || "").trim());
     if (promptsuz.length) ozet.push(`${await promptAdimi(promptsuz)} prompt`);
@@ -211,8 +216,8 @@ export async function projeGorunumu(kok, id, kabuk) {
       ? " Görseller için Cloudflare ayarlı değil; galeriden ekleyebilirsin." : "";
     if (P.hareketli) {
       const klipsiz = P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim());
-      if (klipsiz.length && ayar.hfToken) ozet.push(`${await klipAdimi(klipsiz)} klip`);
-      else if (klipsiz.length) not += " Klipler için Hugging Face token'ı yok: Ayarlar bölümünden gir.";
+      if (klipsiz.length && havuz.hesapVar("huggingface")) ozet.push(`${await klipAdimi(klipsiz)} klip`);
+      else if (klipsiz.length) not += " Klipler için Hugging Face hesabı yok: Ayarlar bölümünden ekle.";
     }
     return (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : "Her şey zaten hazır.") + not;
   });
@@ -263,7 +268,7 @@ export async function projeGorunumu(kok, id, kabuk) {
       if (P.senaryo.trim() && !confirm("Mevcut senaryonun üzerine yazılsın mı?")) return;
       calistir(async () => {
         adim("Gemini senaryoyu yazıyor…");
-        P.senaryo = await metinAI.senaryoYaz({ anahtar: ayar.gemini, konu: P.konu, dil: P.dil, saniye: Number(P.hedefSaniye) || 60 });
+        P.senaryo = await metinAI.senaryoYaz({ anahtar: hesapla("gemini"), konu: P.konu, dil: P.dil, saniye: Number(P.hedefSaniye) || 60 });
         return "Senaryo yazıldı. Okuyup düzelt, sonra sahnelere böl.";
       });
     } }, "Senaryoyu Gemini yazsın");
@@ -360,7 +365,7 @@ export async function projeGorunumu(kok, id, kabuk) {
                         oninput: (o) => { sahne.hareket = o.target.value; kaydet(); } })) : null,
       P.hareketli && sahne.gorselVar ? h("div", { class: "satir" },
         h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-          if (!ayar.hfToken) throw new Error("Hugging Face token'ı yok: Ayarlar bölümünden gir.");
+          if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: Ayarlar bölümünden ekle.");
           adim(`Sahne ${no} klibi üretiliyor…`);
           await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
           return `Sahne ${no} klibi hazır.`;
@@ -419,7 +424,7 @@ export async function projeGorunumu(kok, id, kabuk) {
         h("div", { class: "satir" },
           h("button", { class: "dugme birincil is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "Eksikleri üret"),
           h("button", { class: "dugme is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-            if (!ayar.gemini) throw new Error("Gemini anahtarı yok: Ayarlar bölümünden gir.");
+            if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
             const n = await sesAdimi();
             return n ? `${n} ses parçası üretildi.` : "Ses zaten hazır.";
           }) }, "Yalnızca ses")),

@@ -1,6 +1,6 @@
 // Gemini ile metin üretimi: senaryo yazımı ve sahne başına görsel prompt'u.
 import { DILLER } from "./gemini.js";
-import { zamanAsimi, zamanAsimiMi } from "./ag.js";
+import { zamanAsimi, zamanAsimiMi, geminiHatasi, hizmetIstegi, anahtarBos } from "./ag.js";
 
 const KOK = "https://generativelanguage.googleapis.com/v1beta";
 // Sırayla denenir: model kapatılmışsa (404), yoğunsa (503) ya da SURE_SINIRI içinde yanıt
@@ -9,17 +9,20 @@ const MODELLER = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-flash-lite-
 const SURE_SINIRI = 75_000;
 const GRUP = 6;     // tek istekte prompt'u yazılan sahne sayısı
 
+/** `anahtar`: Gemini anahtarı ya da hesap havuzu sarmalayıcısı `(is) => hesaplarla("gemini", is)`. */
 async function uret(anahtar, sistem, kullanici, json) {
-  if (!(anahtar || "").trim()) throw new Error("Önce Ayarlar bölümüne Gemini anahtarını gir.");
+  if (typeof anahtar === "function") return anahtar((degerler) => uret(degerler.gemini_key, sistem, kullanici, json));
+  if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
   let son = "";
   // İki tur: ilk turda bütün modeller yoğunsa (503) kısa bir beklemeden sonra bir kez daha denenir.
   for (const [sira, model] of [...MODELLER, ...MODELLER].entries()) {
     if (sira === MODELLER.length) await new Promise((coz) => setTimeout(coz, 8000));
     let yanit;
     try {
-      yanit = await fetch(`${KOK}/models/${model}:generateContent`, {
+      const yol = `/models/${model}:generateContent`;
+      yanit = await hizmetIstegi(anahtar, "/gemini/v1beta" + yol, { adres: KOK + yol, basliklar: { "x-goog-api-key": String(anahtar).trim() } }, {
         method: "POST",
-        headers: { "x-goog-api-key": anahtar.trim(), "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sistem }] },
           contents: [{ parts: [{ text: kullanici }] }],
@@ -30,6 +33,7 @@ async function uret(anahtar, sistem, kullanici, json) {
       });
     } catch (hata) {
       if (zamanAsimiMi(hata)) { son = `${model}: ${SURE_SINIRI / 1000} sn içinde yanıt vermedi`; continue; }
+      if (/^Kasa: /.test(hata.message)) throw hata;
       throw new Error("Gemini'ye bağlanılamadı (internet bağlantısını denetle).");
     }
     const veri = await yanit.json().catch(() => null);
@@ -44,9 +48,7 @@ async function uret(anahtar, sistem, kullanici, json) {
       son = `${model}: ${mesaj || yanit.status}`;
       continue;
     }
-    if (yanit.status === 429) throw new Error("Gemini metin kotası doldu ya da hız sınırı aşıldı (429). " + mesaj);
-    if (yanit.status === 400 && /API key/i.test(mesaj)) throw new Error("Gemini anahtarı geçersiz.");
-    throw new Error(`Gemini hatası (${yanit.status}). ${mesaj}`.trim());
+    throw geminiHatasi(yanit.status, veri);
   }
   throw new Error("Gemini şu an yanıt vermiyor. Biraz sonra yeniden dene. " + son);
 }

@@ -4,7 +4,7 @@
 //   2. /gradio_api/upload     → kareyi yükle
 //   3. /gradio_api/call/…     → işi başlat, olay akışından (SSE) sonucu bekle
 // Masaüstü StudioFlow'daki `saglayicilar/video_ltx.py` ile aynı parametreler ve koruma eki.
-import { zamanAsimi } from "./ag.js";
+import { zamanAsimi, hataKur, hizmetIstegi, kasaMi, anahtarBos } from "./ag.js";
 
 export const RESMI_SPACE = "Lightricks/LTX-2-3";
 export const SURE_ALT = 1, SURE_UST = 8;
@@ -21,7 +21,8 @@ export function olcuSec(dikey) {
   return dikey ? { en: 704, boy: 1280 } : { en: 1280, boy: 704 };
 }
 
-const spaceAdresi = (space) => `https://${space.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}.hf.space`;
+const spaceKisaAdi = (space) => space.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+const spaceAdresi = (space) => `https://${spaceKisaAdi(space)}.hf.space`;
 
 function hataDuzenle(metin, space) {
   const sade = String(metin || "").replace(/hf_[A-Za-z0-9]+/g, "[gizli]").slice(0, 400);
@@ -31,8 +32,14 @@ function hataDuzenle(metin, space) {
   return `LTX hatası (${space}): ${sade || "Space ayrıntı vermedi; GPU kotası ya da süresi yetmemiş olabilir."}`;
 }
 
-/** Hata başka bir Space'le yeniden denenebilir mi (GPU yok / kota / Space ulaşılamıyor)? */
-const spaceSorunu = (hata) => /GPU|kotası|ulaşılamıyor|hazır değil/i.test(hata.message);
+/** Hata nesnesi: hesabın GPU kotası dolduysa `tur: "kota"`, token reddedildiyse `tur: "yetki"` (hesap havuzu sıradakine geçer). */
+function ltxHatasi(metin, space) {
+  const mesaj = hataDuzenle(metin, space);
+  return hataKur(mesaj, /kotası doldu/.test(mesaj) ? { tur: "kota" } : /reddedildi/.test(mesaj) ? { tur: "yetki" } : {});
+}
+
+/** Hata başka bir Space'le yeniden denenebilir mi (Space GPU vermiyor ya da ulaşılamıyor)? Kota hesabın sorunudur, Space'in değil. */
+const spaceSorunu = (hata) => !hata.tur && /GPU vermiyor|ulaşılamıyor|hazır değil/i.test(hata.message);
 
 function urlBul(deger) {
   if (!deger || typeof deger !== "object") return null;
@@ -72,11 +79,14 @@ async function akisOku(yanit, olay, iptal) {
 
 async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bildir, iptal }) {
   const kok = spaceAdresi(space);
-  const yetki = token ? { Authorization: `Bearer ${token}` } : {};
+  const yetki = kasaMi(token) ? {} : { Authorization: `Bearer ${token}` };
+  // Kasada istek `/hf/<space>/gradio_api/…` yolundan geçer; token'ı kasa ekler.
   const al = async (yol, secenek = {}, ms = 60_000) => {
     try {
-      return await fetch(kok + yol, { ...secenek, headers: { ...yetki, ...(secenek.headers || {}) }, signal: zamanAsimi(ms) });
-    } catch {
+      return await hizmetIstegi(token, `/hf/${spaceKisaAdi(space)}${yol}`, { adres: kok + yol, basliklar: yetki },
+                                { ...secenek, signal: zamanAsimi(ms) });
+    } catch (hata) {
+      if (/^Kasa: /.test(hata.message)) throw hata;
       throw new Error(`LTX · ${space} Space'ine ulaşılamıyor (uykuda ya da kapalı olabilir).`);
     }
   };
@@ -90,7 +100,7 @@ async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bil
   const form = new FormData();
   form.append("files", gorsel, "input.jpg");
   const yukleme = await al("/gradio_api/upload", { method: "POST", body: form }, 120_000);
-  if (!yukleme.ok) throw new Error(hataDuzenle(await yukleme.text().catch(() => yukleme.status), space));
+  if (!yukleme.ok) throw ltxHatasi(await yukleme.text().catch(() => yukleme.status), space);
   const yol = (await yukleme.json())?.[0];
   if (!yol) throw new Error(`LTX · ${space} kareyi kabul etmedi.`);
 
@@ -111,20 +121,20 @@ async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bil
   const baslat = await al(`/gradio_api/call/${UC}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: veri }) });
   const olayKimligi = (await baslat.json().catch(() => null))?.event_id;
-  if (!baslat.ok || !olayKimligi) throw new Error(hataDuzenle(`iş başlatılamadı (${baslat.status})`, space));
+  if (!baslat.ok || !olayKimligi) throw ltxHatasi(`iş başlatılamadı (${baslat.status})`, space);
 
   const basla = Date.now();
   const sayac = setInterval(() => bildir?.(`LTX · video üretiliyor • ${Math.round((Date.now() - basla) / 1000)} sn`), 2000);
   let sonuc = null, hata = null;
   try {
     const akis = await al(`/gradio_api/call/${UC}/${olayKimligi}`, {}, BEKLEME_SINIRI);
-    if (!akis.ok) throw new Error(hataDuzenle(`sonuç akışı açılamadı (${akis.status})`, space));
+    if (!akis.ok) throw ltxHatasi(`sonuç akışı açılamadı (${akis.status})`, space);
     await akisOku(akis, (ad, govde) => {
       if (ad === "complete") { try { sonuc = JSON.parse(govde); } catch { sonuc = null; } return "bitti"; }
       if (ad === "error") {
         let mesaj = govde;
         try { const j = JSON.parse(govde); mesaj = j?.error || j?.message || j?.title || (typeof j === "string" ? j : ""); } catch { /* düz metin */ }
-        hata = hataDuzenle(mesaj, space);
+        hata = ltxHatasi(mesaj, space);
         return "bitti";
       }
       return null;
@@ -135,16 +145,19 @@ async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bil
   } finally {
     clearInterval(sayac);
   }
-  if (hata) throw new Error(hata);
+  if (hata) throw hata;
   const bulunan = urlBul(sonuc);
   // Ölçüldü (masaüstü): GPU süresi yetmeyince Space hata değil boş sonuç döndürür.
-  if (!bulunan) throw new Error(`LTX video döndürmedi (${space}): hesabın GPU kotası yetmemiş olabilir.`);
+  if (!bulunan) throw hataKur(`LTX video döndürmedi (${space}): hesabın GPU kotası yetmemiş olabilir.`, { tur: "kota", bekleme: 1800 });
   const adres = typeof bulunan === "string" ? bulunan : `${kok}/gradio_api/file=${bulunan.yol}`;
   bildir?.("LTX · klip indiriliyor…");
   let dosya;
   try {
-    dosya = await fetch(adres, { headers: adres.startsWith(kok) ? yetki : {}, signal: zamanAsimi(180_000) });
-  } catch {
+    dosya = adres.startsWith(kok)
+      ? await al(adres.slice(kok.length), {}, 180_000)
+      : await fetch(adres, { signal: zamanAsimi(180_000) });
+  } catch (hata) {
+    if (/^Kasa: |ulaşılamıyor/.test(hata.message)) throw hata;
     throw new Error("LTX · klip indirilemedi (bağlantı).");
   }
   if (!dosya.ok) throw new Error(`LTX · klip indirilemedi (${dosya.status}).`);
@@ -158,14 +171,14 @@ async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bil
  * Kendi Space GPU vermezse sıradaki denenir; son hata olduğu gibi yükselir.
  */
 export async function videoUret({ token, spaceler = [], erisim = "", gorsel, prompt, sure, dikey, bildir, iptal }) {
-  if (!(token || "").trim()) throw new Error("Önce Ayarlar bölümüne Hugging Face token'ını gir.");
+  if (anahtarBos(token)) throw new Error("Hugging Face hesabı yok: Ayarlar bölümünden ekle.");
   const kendi = erisim ? spaceler.map((s) => s.trim()).filter(Boolean) : [];
   const adaylar = [...kendi.map((space) => ({ space, erisim })), { space: RESMI_SPACE, erisim: "" }];
   let son = null;
   for (const [sira, aday] of adaylar.entries()) {
     if (iptal?.()) throw new Error("Durduruldu.");
     try {
-      return await tekSpace({ ...aday, token: token.trim(), gorsel, prompt: (prompt || "").trim() || VARSAYILAN_HAREKET,
+      return await tekSpace({ ...aday, token: kasaMi(token) ? token : token.trim(), gorsel, prompt: (prompt || "").trim() || VARSAYILAN_HAREKET,
                               sure, dikey, bildir, iptal });
     } catch (hata) {
       son = hata;

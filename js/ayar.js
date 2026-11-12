@@ -5,7 +5,7 @@ function oku() {
   try { return JSON.parse(localStorage.getItem(ANAHTAR)) || {}; } catch { return {}; }
 }
 
-/** Geçerli ayarlar (yerinde güncellenir). Alanlar: gemini, cfHesap, cfToken, cfAraci, hfToken, ltxSpaceler, ltxErisim, dil, ses, model… */
+/** Geçerli ayarlar (yerinde güncellenir). Alanlar: cfAraci, ltxSpaceler, ltxErisim, dil, ses, model… (API hesapları `hesap.js`'tedir.) */
 export const ayar = oku();
 
 /** Değişiklikleri uygular ve kaydeder; boş değerli alanlar silinir. Kaydedilemezse `false`. */
@@ -17,5 +17,4 @@ export function ayarGuncelle(degisiklik) {
   try { localStorage.setItem(ANAHTAR, JSON.stringify(ayar)); return true; } catch { return false; }
 }
 
-export const cloudflareHazir = () => !!(ayar.cfHesap && ayar.cfToken && ayar.cfAraci);
 export const ltxSpaceleri = () => (ayar.ltxSpaceler || "").split(/[\s,;]+/).filter(Boolean);

@@ -2,7 +2,7 @@
 // api.cloudflare.com tarayıcıdan gelen isteklere (CORS) izin vermez; bu yüzden istek
 // kullanıcının kendi Cloudflare Worker aracısından geçer (bkz. araci/cloudflare-araci.js).
 import { base64Coz } from "./ses.js";
-import { zamanAsimi, zamanAsimiMi } from "./ag.js";
+import { zamanAsimi, zamanAsimiMi, hataKur, hizmetIstegi, kasaMi } from "./ag.js";
 
 export const MODELLER = [
   { kimlik: "@cf/black-forest-labs/flux-2-klein-4b", ad: "FLUX.2 klein 4B (önerilen)", cokParcali: true, adim: 16 },
@@ -19,8 +19,9 @@ function gorselTuru(bayt) {
 
 /** Görsel üretir ve `Blob` döndürür. */
 export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }) {
-  if (!(araci || "").trim()) throw new Error("Cloudflare için aracı adresi gerekli (Ayarlar bölümü). Galeriden görsel de ekleyebilirsin.");
-  if (!(hesap || "").trim() || !(token || "").trim()) throw new Error("Cloudflare Account ID ve token'ı Ayarlar bölümüne gir.");
+  const kasa = kasaMi(token);     // kasada Account ID de kasadadır; aracı gerekmez
+  if (!kasa && !(araci || "").trim()) throw new Error("Cloudflare için aracı adresi gerekli (Ayarlar bölümü). Galeriden görsel de ekleyebilirsin.");
+  if (!kasa && (!(hesap || "").trim() || !(token || "").trim())) throw new Error("Cloudflare hesabı yok: Ayarlar bölümünden ekle.");
   if (!(prompt || "").trim()) throw new Error("Görsel için bir tarif yaz.");
   const tanim = MODELLER.find((m) => m.kimlik === model) || MODELLER[0];
   const alanlar = { prompt: prompt.trim() };
@@ -30,8 +31,10 @@ export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }
     alanlar.height = oturt(boy);
   }
   // Model adı yolda kodlanmadan yazılır; `%2F` ile kodlanırsa Cloudflare yolu bulamaz.
-  const adres = `${araci.trim().replace(/\/+$/, "")}/client/v4/accounts/${encodeURIComponent(hesap.trim())}/ai/run/${tanim.kimlik}`;
-  const istek = { method: "POST", headers: { Authorization: `Bearer ${token.trim().replace(/^bearer\s+/i, "")}` } };
+  const dogrudan = kasa ? null : {
+    adres: `${araci.trim().replace(/\/+$/, "")}/client/v4/accounts/${encodeURIComponent(hesap.trim())}/ai/run/${tanim.kimlik}`,
+    basliklar: { Authorization: `Bearer ${token.trim().replace(/^bearer\s+/i, "")}` } };
+  const istek = { method: "POST", headers: {} };
   if (tanim.cokParcali) {
     istek.body = new FormData();
     for (const [ad, deger] of Object.entries(alanlar)) istek.body.append(ad, String(deger));
@@ -41,8 +44,9 @@ export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }
   }
   let yanit;
   try {
-    yanit = await fetch(adres, { ...istek, signal: zamanAsimi(300_000) });
+    yanit = await hizmetIstegi(token, `/cloudflare/ai/run/${tanim.kimlik}`, dogrudan, { ...istek, signal: zamanAsimi(300_000) });
   } catch (hata) {
+    if (/^Kasa: /.test(hata.message)) throw hata;
     if (zamanAsimiMi(hata)) throw new Error("Cloudflare 5 dakikada yanıt vermedi. Yeniden dene.");
     throw new Error("Aracıya bağlanılamadı. Aracı adresini ve izinli kökeni denetle.");
   }
@@ -55,9 +59,10 @@ export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }
     } catch { /* gövde JSON değil */ }
     const ipucu = { 401: "Token reddedildi.", 403: "Token'da Workers AI izni yok ya da köken izinli değil.",
                     404: "Account ID ya da model bulunamadı.", 429: "Kota ya da hız sınırı aşıldı." }[yanit.status] || "";
-    const hata = new Error(`Cloudflare hatası (${yanit.status}). ${ipucu} ${ayrinti}`.trim());
-    hata.durum = yanit.status;
-    throw hata;
+    // Günlük ücretsiz nöron kotası (4006) ve 429 hesabı bekletir; 401 ve 403 anahtar sorunudur.
+    const gunluk = /daily free allocation|4006/i.test(ayrinti);
+    const hataTuru = gunluk || yanit.status === 429 ? "kota" : yanit.status === 401 || yanit.status === 403 ? "yetki" : undefined;
+    throw hataKur(`Cloudflare hatası (${yanit.status}). ${ipucu} ${ayrinti}`.trim(), { durum: yanit.status, tur: hataTuru, gunluk });
   }
   if (tur.includes("json")) {
     const veri = await yanit.json();
