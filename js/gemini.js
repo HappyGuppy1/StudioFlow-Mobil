@@ -46,7 +46,7 @@ function sesBloklari(deger, anahtar = "") {
 
 /** Metni seslendirir: `{ pcm: Float32Array, hiz }` (tek kanal). */
 export async function seslendir({ anahtar, model, ses, dil, stil, metin }) {
-  if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
+  if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: API sayfasından ekle.");
   if (!(metin || "").trim()) throw new Error("Seslendirilecek metni yaz.");
   const istem = istemKur(metin, dil, stil);
   let yol, govde;

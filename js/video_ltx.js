@@ -171,7 +171,7 @@ async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bil
  * Kendi Space GPU vermezse sıradaki denenir; son hata olduğu gibi yükselir.
  */
 export async function videoUret({ token, spaceler = [], erisim = "", gorsel, prompt, sure, dikey, bildir, iptal }) {
-  if (anahtarBos(token)) throw new Error("Hugging Face hesabı yok: Ayarlar bölümünden ekle.");
+  if (anahtarBos(token)) throw new Error("Hugging Face hesabı yok: API sayfasından ekle.");
   const kendi = erisim ? spaceler.map((s) => s.trim()).filter(Boolean) : [];
   const adaylar = [...kendi.map((space) => ({ space, erisim })), { space: RESMI_SPACE, erisim: "" }];
   let son = null;

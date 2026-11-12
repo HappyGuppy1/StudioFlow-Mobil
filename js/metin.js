@@ -12,7 +12,7 @@ const GRUP = 6;     // tek istekte prompt'u yazılan sahne sayısı
 /** `anahtar`: Gemini anahtarı ya da hesap havuzu sarmalayıcısı `(is) => hesaplarla("gemini", is)`. */
 async function uret(anahtar, sistem, kullanici, json) {
   if (typeof anahtar === "function") return anahtar((degerler) => uret(degerler.gemini_key, sistem, kullanici, json));
-  if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
+  if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: API sayfasından ekle.");
   let son = "";
   // İki tur: ilk turda bütün modeller yoğunsa (503) kısa bir beklemeden sonra bir kez daha denenir.
   for (const [sira, model] of [...MODELLER, ...MODELLER].entries()) {

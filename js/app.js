@@ -2,8 +2,9 @@
 import { kutuphaneGorunumu } from "./gorunum/kutuphane.js";
 import { projeGorunumu } from "./gorunum/proje.js";
 import { ayarlarGorunumu } from "./gorunum/ayarlar.js";
+import { apiGorunumu } from "./gorunum/api.js";
 
-const SURUM = "0.4.0";
+const SURUM = "0.5.0";
 const el = (kimlik) => document.getElementById(kimlik);
 const kok = el("gorunum");
 
@@ -27,12 +28,14 @@ async function yonlendir() {
   kapat = null;
   kok.replaceChildren();
   const [, yol, id] = location.hash.split("/");
-  el("sek-projeler").classList.toggle("secili", yol !== "ayarlar");
+  el("sek-projeler").classList.toggle("secili", yol !== "ayarlar" && yol !== "api");
+  el("sek-api").classList.toggle("secili", yol === "api");
   el("sek-ayarlar").classList.toggle("secili", yol === "ayarlar");
   window.scrollTo(0, 0);
   let kapatici = null;
   try {
     if (yol === "proje" && id) kapatici = await projeGorunumu(kok, decodeURIComponent(id), kabuk);
+    else if (yol === "api") kapatici = await apiGorunumu(kok, kabuk);
     else if (yol === "ayarlar") kapatici = await ayarlarGorunumu(kok, kabuk, SURUM);
     else kapatici = await kutuphaneGorunumu(kok, kabuk);
   } catch (hata) {

@@ -49,7 +49,7 @@ export async function projeGorunumu(kok, id, kabuk) {
   const durduysa = () => { if (is.iptal) throw new Error("Durduruldu. Tamamlanan adımlar kaydedildi."); };
   // Hesap havuzu: kotası biten hesap atlanır, sıradakiyle sürer; geçişler iş çubuğuna yazılır.
   const hesapla = (hizmet) => (isi) => havuz.hesaplarla(hizmet, isi, { bildir: (mesaj) => adim(mesaj), iptal: () => is.iptal });
-  const cloudflareHazir = () => havuz.hesapVar("cloudflare") && (havuz.kasaAcik() || !!ayar.cfAraci);
+  const cloudflareHazir = () => havuz.hesapVar("cloudflare");
 
   async function calistir(is_) {
     if (is.calisiyor) return;
@@ -178,7 +178,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     for (let deneme = 1; ; deneme++) {
       try {
         const blob = await hesapla("cloudflare")((hesap) => cloudflare.gorselUret({
-          araci: ayar.cfAraci, hesap: hesap.cf_account_id, token: hesap.cf_token,
+          hesap: hesap.cf_account_id, token: hesap.cf_token,
           model: P.gorselModel, prompt: gorselPromptu(P, sahne), ...boyut }));
         await gorselKaydet(sahne, { veri: await blob.arrayBuffer(), tur: blob.type || "image/jpeg" });
         return;
@@ -203,7 +203,7 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   const tumunuUret = () => calistir(async () => {
     if (!P.sahneler.length) throw new Error("Önce Senaryo sekmesinde sahneleri oluştur.");
-    if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
+    if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: API sayfasından kasaya bağlanıp ekle.");
     const ozet = [];
     const promptsuz = P.sahneler.filter((s) => !(s.prompt || "").trim());
     if (promptsuz.length) ozet.push(`${await promptAdimi(promptsuz)} prompt`);
@@ -213,11 +213,11 @@ export async function projeGorunumu(kok, id, kabuk) {
     const gorselsiz = P.sahneler.filter((s) => !s.gorselVar);
     if (gorselsiz.length && cloudflareHazir()) ozet.push(`${await gorselAdimi(gorselsiz)} görsel`);
     let not = gorselsiz.length && !cloudflareHazir()
-      ? " Görseller için Cloudflare ayarlı değil; galeriden ekleyebilirsin." : "";
+      ? " Görseller için Cloudflare hesabı yok (API sayfası); galeriden ekleyebilirsin." : "";
     if (P.hareketli) {
       const klipsiz = P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim());
       if (klipsiz.length && havuz.hesapVar("huggingface")) ozet.push(`${await klipAdimi(klipsiz)} klip`);
-      else if (klipsiz.length) not += " Klipler için Hugging Face hesabı yok: Ayarlar bölümünden ekle.";
+      else if (klipsiz.length) not += " Klipler için Hugging Face hesabı yok: API sayfasından ekle.";
     }
     return (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : "Her şey zaten hazır.") + not;
   });
@@ -365,7 +365,7 @@ export async function projeGorunumu(kok, id, kabuk) {
                         oninput: (o) => { sahne.hareket = o.target.value; kaydet(); } })) : null,
       P.hareketli && sahne.gorselVar ? h("div", { class: "satir" },
         h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-          if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: Ayarlar bölümünden ekle.");
+          if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: API sayfasından ekle.");
           adim(`Sahne ${no} klibi üretiliyor…`);
           await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
           return `Sahne ${no} klibi hazır.`;
@@ -424,7 +424,7 @@ export async function projeGorunumu(kok, id, kabuk) {
         h("div", { class: "satir" },
           h("button", { class: "dugme birincil is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "Eksikleri üret"),
           h("button", { class: "dugme is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-            if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: Ayarlar bölümünden ekle.");
+            if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: API sayfasından kasaya bağlanıp ekle.");
             const n = await sesAdimi();
             return n ? `${n} ses parçası üretildi.` : "Ses zaten hazır.";
           }) }, "Yalnızca ses")),

@@ -20,8 +20,8 @@ function gorselTuru(bayt) {
 /** Görsel üretir ve `Blob` döndürür. */
 export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }) {
   const kasa = kasaMi(token);     // kasada Account ID de kasadadır; aracı gerekmez
-  if (!kasa && !(araci || "").trim()) throw new Error("Cloudflare için aracı adresi gerekli (Ayarlar bölümü). Galeriden görsel de ekleyebilirsin.");
-  if (!kasa && (!(hesap || "").trim() || !(token || "").trim())) throw new Error("Cloudflare hesabı yok: Ayarlar bölümünden ekle.");
+  if (!kasa && !(araci || "").trim()) throw new Error("Cloudflare isteği için kasa ya da aracı adresi gerekli.");
+  if (!kasa && (!(hesap || "").trim() || !(token || "").trim())) throw new Error("Cloudflare hesabı yok: API sayfasından ekle.");
   if (!(prompt || "").trim()) throw new Error("Görsel için bir tarif yaz.");
   const tanim = MODELLER.find((m) => m.kimlik === model) || MODELLER[0];
   const alanlar = { prompt: prompt.trim() };
