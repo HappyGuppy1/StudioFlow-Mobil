@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StudioFlow Mobil</title>
+<meta name="description" content="StudioFlow'un telefonda çalışan deneme sürümü: seslendirme, görsel ve video, tamamı cihazda.">
+<meta name="theme-color" content="#0e1118">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StudioFlow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="ikon/ikon-192.png">
+<link rel="apple-touch-icon" href="ikon/ikon-180.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="ust">
+  <div class="marka"><img src="ikon/ikon-192.png" alt="" width="32" height="32"><span>Studio<b>Flow</b> Mobil</span></div>
+  <span class="cip">deneme sürümü</span>
+</header>
+
+<main>
+  <details class="kart" id="baglantilar">
+    <summary><span class="adim">⚙</span><span class="baslik">Bağlantılar</span><span class="cip" id="baglanti-ozet">anahtar yok</span></summary>
+    <p class="soluk">Anahtarlar yalnızca bu cihazda saklanır; hiçbir sunucuya ya da depoya gönderilmez.</p>
+    <label>Gemini API anahtarı (seslendirme)
+      <input id="gemini-anahtar" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <label>Cloudflare Account ID (görsel)
+      <input id="cf-hesap" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <label>Cloudflare API token
+      <input id="cf-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <label>Aracı adresi (Cloudflare Worker)
+      <input id="cf-araci" type="url" inputmode="url" placeholder="https://….workers.dev" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <p class="soluk">Cloudflare tarayıcıdan doğrudan çağrıya izin vermediği için küçük bir aracı gerekir;
+      kurulumu <a href="https://github.com/HappyGuppy1/StudioFlow-Mobil#cloudflare-aracısı" target="_blank" rel="noopener">burada</a> anlatılıyor.
+      Aracı yoksa galeriden görsel ekleyebilirsin.</p>
+    <div class="satir">
+      <button class="dugme birincil" id="baglanti-kaydet">Kaydet</button>
+      <button class="dugme" id="baglanti-sil">Anahtarları sil</button>
+    </div>
+    <p class="durum" id="baglanti-durum" role="status"></p>
+  </details>
+
+  <section class="kart">
+    <h2><span class="adim">1</span>Seslendirme</h2>
+    <label>Metin
+      <textarea id="metin" rows="5" placeholder="Seslendirilecek metni yaz…"></textarea>
+    </label>
+    <div class="izgara-2">
+      <label>Dil <select id="dil"></select></label>
+      <label>Ses <select id="ses"></select></label>
+    </div>
+    <label>Model <select id="model"></select></label>
+    <label>Anlatım tarzı (isteğe bağlı)
+      <input id="stil" type="text" placeholder="Sakin, belgesel anlatıcısı">
+    </label>
+    <div class="satir">
+      <button class="dugme birincil" id="seslendir">Seslendir</button>
+      <label class="dugme dosya">Ses dosyası seç<input id="ses-dosya" type="file" accept="audio/*" hidden></label>
+    </div>
+    <p class="durum" id="ses-durum" role="status"></p>
+    <audio id="ses-oynatici" controls hidden></audio>
+  </section>
+
+  <section class="kart">
+    <h2><span class="adim">2</span>Görseller</h2>
+    <label>Görsel tarifi
+      <textarea id="prompt" rows="3" placeholder="Örn. A lone fisherman on a misty lake at dawn, cinematic"></textarea>
+    </label>
+    <label>Model <select id="gorsel-model"></select></label>
+    <div class="satir">
+      <button class="dugme birincil" id="gorsel-uret">Görsel üret</button>
+      <label class="dugme dosya">Galeriden ekle<input id="gorsel-dosya" type="file" accept="image/*" multiple hidden></label>
+    </div>
+    <p class="durum" id="gorsel-durum" role="status"></p>
+    <div class="gorsel-izgara" id="gorsel-izgara"></div>
+  </section>
+
+  <section class="kart">
+    <h2><span class="adim">3</span>Video</h2>
+    <div class="izgara-2">
+      <label>Boyut
+        <select id="boyut">
+          <option value="720x1280">Dikey 720 × 1280</option>
+          <option value="1080x1920">Dikey 1080 × 1920</option>
+          <option value="1280x720">Yatay 1280 × 720</option>
+          <option value="1920x1080">Yatay 1920 × 1080</option>
+        </select>
+      </label>
+      <label>Yöntem
+        <select id="yontem">
+          <option value="oto">Otomatik</option>
+          <option value="hizli">Hızlı</option>
+          <option value="gercek">Gerçek zamanlı</option>
+        </select>
+      </label>
+    </div>
+    <p class="soluk" id="video-ozet">Ses ve en az bir görsel ekleyince video oluşturabilirsin. Ses yoksa görsel başına 4 saniye kullanılır.</p>
+    <div class="satir">
+      <button class="dugme birincil" id="video-olustur">Videoyu oluştur</button>
+      <button class="dugme" id="video-iptal" hidden>İptal</button>
+    </div>
+    <progress id="video-ilerleme" max="1" value="0" hidden></progress>
+    <p class="durum" id="video-durum" role="status"></p>
+    <video id="video-oynatici" controls playsinline hidden></video>
+    <div class="satir">
+      <button class="dugme birincil" id="video-kaydet" hidden>Kaydet / Paylaş</button>
+    </div>
+  </section>
+
+  <section class="kart">
+    <h2><span class="adim">✓</span>Cihaz raporu</h2>
+    <p class="soluk">Bu telefonun neleri desteklediğini gösterir. Bir sorun olursa raporu kopyalayıp gönder.</p>
+    <ul class="rapor" id="rapor-liste"></ul>
+    <div class="satir">
+      <button class="dugme" id="rapor-kopyala">Raporu kopyala</button>
+    </div>
+    <p class="durum" id="rapor-durum" role="status"></p>
+  </section>
+</main>
+
+<footer class="alt">StudioFlow Mobil · sürüm <span id="surum"></span></footer>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

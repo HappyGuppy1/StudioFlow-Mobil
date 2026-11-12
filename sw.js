@@ -1,0 +1,37 @@
+// Çevrimdışı açılış: uygulama dosyaları önbelleğe alınır.
+// Strateji "önce ağ": bağlantı varsa her zaman güncel dosya gelir, yoksa önbellekteki açılır.
+// Yalnızca aynı kökenden GET istekleri ele alınır; API çağrılarına (Gemini, aracı) dokunulmaz.
+const ONBELLEK = "studioflow-mobil-v1";
+const DOSYALAR = [
+  "./", "index.html", "app.css", "manifest.webmanifest",
+  "js/app.js", "js/ses.js", "js/gemini.js", "js/cloudflare.js", "js/disa_aktar.js", "js/cihaz.js",
+  "kitaplik/mp4-muxer.mjs", "ikon/ikon-180.png", "ikon/ikon-192.png", "ikon/ikon-512.png",
+];
+
+self.addEventListener("install", (olay) => {
+  olay.waitUntil(caches.open(ONBELLEK).then((depo) => depo.addAll(DOSYALAR)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (olay) => {
+  olay.waitUntil(
+    caches.keys()
+      .then((adlar) => Promise.all(adlar.filter((ad) => ad !== ONBELLEK).map((ad) => caches.delete(ad))))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (olay) => {
+  const istek = olay.request;
+  if (istek.method !== "GET" || new URL(istek.url).origin !== self.location.origin) return;
+  olay.respondWith(
+    fetch(istek)
+      .then((yanit) => {
+        if (yanit.ok) {
+          const kopya = yanit.clone();
+          caches.open(ONBELLEK).then((depo) => depo.put(istek, kopya));
+        }
+        return yanit;
+      })
+      .catch(() => caches.match(istek, { ignoreSearch: true }).then((kayit) => kayit || caches.match("index.html"))),
+  );
+});
