@@ -14,9 +14,11 @@ async function uret(anahtar, sistem, kullanici, json) {
   if (typeof anahtar === "function") return anahtar((degerler) => uret(degerler.gemini_key, sistem, kullanici, json));
   if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: API sayfasından ekle.");
   let son = "";
-  // İki tur: ilk turda bütün modeller yoğunsa (503) kısa bir beklemeden sonra bir kez daha denenir.
-  for (const [sira, model] of [...MODELLER, ...MODELLER].entries()) {
-    if (sira === MODELLER.length) await new Promise((coz) => setTimeout(coz, 8000));
+  // Dört tur: Gemini yoğun saatlerde bütün modellerde 503 ("high demand") verebiliyor; turlar arasında
+  // giderek uzayan beklemelerle (8, 20, 40 sn) yeniden denenir.
+  const BEKLEMELER = [0, 8000, 20000, 40000];
+  for (const [sira, model] of BEKLEMELER.flatMap(() => MODELLER).entries()) {
+    if (sira % MODELLER.length === 0 && sira) await new Promise((coz) => setTimeout(coz, BEKLEMELER[sira / MODELLER.length]));
     let yanit;
     try {
       const yol = `/models/${model}:generateContent`;
@@ -50,7 +52,7 @@ async function uret(anahtar, sistem, kullanici, json) {
     }
     throw geminiHatasi(yanit.status, veri);
   }
-  throw new Error("Gemini şu an yanıt vermiyor. Biraz sonra yeniden dene. " + son);
+  throw new Error("Gemini şu an çok yoğun, yanıt vermiyor. Birkaç dakika sonra yeniden dene; tamamlanan adımlar kayıtlı. " + son);
 }
 
 function jsonCoz(metin) {
