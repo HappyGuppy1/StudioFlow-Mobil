@@ -387,3 +387,5 @@ body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
 .editor .ed-islemler .dugme { flex: none; width: 100%; white-space: normal; line-height: 1.2; padding: 6px 6px; font-size: 12px; }
 .ed-islemler .dosya { grid-column: 1 / -1; }
 .ed-ust .dugme.birincil { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+/* İzler düğmesi: açılır kapanır olduğu belli olsun diye kırmızı */
+.editor .ed-zc-ac { background: #d64561; border-color: #d64561; color: #fff; }
