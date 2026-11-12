@@ -1,10 +1,13 @@
-// Video dışa aktarma: görseller + ses → MP4, tamamı cihazda.
+// Video dışa aktarma: zaman çizelgesi (görseller + ses + altyazı) → MP4, tamamı cihazda.
 //
 // İki yol vardır:
-//   hızlı        : WebCodecs (VideoEncoder + AudioEncoder) ile kare kare kodlama. Gerçek
-//                  zamandan hızlıdır, sekme arka plana geçse de kareler atlanmaz.
+//   hızlı         : WebCodecs (VideoEncoder + AudioEncoder) ile kare kare kodlama. Gerçek
+//                   zamandan hızlıdır, sekme arka plana geçse de kareler atlanmaz.
 //   gerçek zamanlı: Tuval + MediaRecorder. Video süresi kadar sürer; ses kodlayıcısı
-//                  olmayan cihazlar (iOS 26 öncesi Safari) için yedektir.
+//                   olmayan cihazlar (iOS 26 öncesi Safari) için yedektir.
+//
+// Görseller ihtiyaç oldukça yüklenir ve en fazla birkaçı bellekte tutulur; böylece çok
+// sahneli videolar telefonun belleğini doldurmaz.
 import { Muxer, ArrayBufferTarget } from "../kitaplik/mp4-muxer.mjs";
 
 const VIDEO_KODEKLERI = ["avc1.640028", "avc1.4d0028", "avc1.42e028", "avc1.42001f"];
@@ -44,28 +47,123 @@ export function kayitTuru() {
   return turler.find((t) => MediaRecorder.isTypeSupported(t)) || null;
 }
 
-/** `t` anındaki kareyi çizer: görsel tuvali kaplar, yavaşça yakınlaşır/uzaklaşır, geçişte erir. */
-export function kareCiz(ctx, gorseller, t, sure, en, boy) {
-  const n = gorseller.length;
-  const dilim = sure / n;
-  const i = Math.min(n - 1, Math.max(0, Math.floor(t / dilim)));
-  const ciz = (k, alfa) => {
-    const g = gorseller[k];
-    const p = Math.min(1, Math.max(0, (t - k * dilim) / dilim));
+/** Görselleri ihtiyaç oldukça yükleyen, en fazla `sinir` tanesini bellekte tutan önbellek. */
+function gorselKaynagi(gorselAl, sinir = 3) {
+  const hazir = new Map();
+  const bekleyen = new Map();
+  const birak = (g) => { if (g instanceof HTMLCanvasElement) g.width = g.height = 0; };
+  return {
+    al: (no) => hazir.get(no) || null,
+    /** Yüklüyse `null`, değilse yüklenince çözülen söz döner. `koru`: atılmaması gerekenler. */
+    hazirla(no, koru = []) {
+      if (hazir.has(no)) return null;
+      if (!bekleyen.has(no)) {
+        bekleyen.set(no, gorselAl(no).then((g) => {
+          hazir.set(no, g);
+          for (const eski of [...hazir.keys()]) {
+            if (hazir.size <= sinir) break;
+            if (eski !== no && !koru.includes(eski)) { birak(hazir.get(eski)); hazir.delete(eski); }
+          }
+        }).finally(() => bekleyen.delete(no)));
+      }
+      return bekleyen.get(no);
+    },
+    bosalt() { for (const g of hazir.values()) birak(g); hazir.clear(); },
+  };
+}
+
+function sirada(liste, t, ipucu) {
+  let i = Math.min(ipucu, liste.length - 1);
+  if (liste[i].bas > t) i = 0;
+  while (i < liste.length - 1 && t >= liste[i].bit) i++;
+  return i;
+}
+
+/** Tek satıra sığmayan altyazıyı iki dengeli satıra böler (sonda tek kelime kalmasın); olmuyorsa sırayla sarar. */
+function satirlaraBol(ctx, metin, azami) {
+  const genislik = (m) => ctx.measureText(m).width;
+  if (genislik(metin) <= azami) return [metin];
+  const kelimeler = metin.split(/\s+/);
+  let enIyi = null;
+  for (let i = 1; i < kelimeler.length; i++) {
+    const ust = kelimeler.slice(0, i).join(" "), alt = kelimeler.slice(i).join(" ");
+    const gu = genislik(ust), ga = genislik(alt);
+    if (gu <= azami && ga <= azami && (!enIyi || Math.abs(gu - ga) < enIyi.fark)) enIyi = { fark: Math.abs(gu - ga), satirlar: [ust, alt] };
+  }
+  if (enIyi) return enIyi.satirlar;
+  const satirlar = [];
+  let satir = "";
+  for (const kelime of kelimeler) {
+    const aday = satir ? satir + " " + kelime : kelime;
+    if (satir && genislik(aday) > azami) { satirlar.push(satir); satir = kelime; }
+    else satir = aday;
+  }
+  if (satir) satirlar.push(satir);
+  return satirlar;
+}
+
+function altyaziCiz(ctx, metin, en, boy) {
+  const punto = Math.round(Math.min(en, boy) * 0.062);
+  ctx.font = `700 ${punto}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  const satirlar = satirlaraBol(ctx, metin, en * 0.86);
+  const aralik = punto * 1.25;
+  const y0 = boy * (en < boy ? 0.8 : 0.86) - (satirlar.length - 1) * aralik / 2;
+  ctx.lineWidth = punto * 0.24;
+  ctx.strokeStyle = "rgba(0, 0, 0, .92)";
+  ctx.fillStyle = "#fff";
+  satirlar.forEach((s, i) => {
+    ctx.strokeText(s, en / 2, y0 + i * aralik);
+    ctx.fillText(s, en / 2, y0 + i * aralik);
+  });
+}
+
+/**
+ * Kare çizici. Her dilimin görseli tuvali kaplar, dilim boyunca yavaşça yakınlaşır ya da
+ * uzaklaşır, bir sonraki dilime eriyerek geçer; varsa o anın altyazısı üste yazılır.
+ */
+function kareCizici({ dilimler, altyazilar, en, boy, kaynak }) {
+  let di = 0, ai = 0;
+  const gecisSuresi = (d) => Math.min(0.5, (d.bit - d.bas) / 4);
+  const dilimCiz = (ctx, k, t, alfa) => {
+    const d = dilimler[k];
+    const g = kaynak.al(d.gorselNo);
+    if (!g) return;
+    const p = Math.min(1, Math.max(0, (t - d.bas) / (d.bit - d.bas)));
     const yakinlik = 1 + 0.1 * (k % 2 ? 1 - p : p);
     const olcek = Math.max(en / g.width, boy / g.height) * yakinlik;
     const w = g.width * olcek, h = g.height * olcek;
     ctx.globalAlpha = alfa;
     ctx.drawImage(g, (en - w) / 2, (boy - h) / 2, w, h);
   };
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, en, boy);
-  ciz(i, 1);
-  const gecis = Math.min(0.5, dilim / 4);
-  const kalan = (i + 1) * dilim - t;
-  if (i < n - 1 && kalan < gecis) ciz(i + 1, 1 - kalan / gecis);
-  ctx.globalAlpha = 1;
+  return {
+    /** `t` anında çizilecek görsel numaraları (geçiş sırasında iki tane). */
+    gerekenler(t) {
+      di = sirada(dilimler, t, di);
+      const d = dilimler[di];
+      const liste = [d.gorselNo];
+      if (di < dilimler.length - 1 && d.bit - t < gecisSuresi(d)) liste.push(dilimler[di + 1].gorselNo);
+      return liste;
+    },
+    ciz(ctx, t) {
+      di = sirada(dilimler, t, di);
+      const d = dilimler[di];
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, en, boy);
+      dilimCiz(ctx, di, t, 1);
+      const kalan = d.bit - t;
+      if (di < dilimler.length - 1 && kalan < gecisSuresi(d)) dilimCiz(ctx, di + 1, t, 1 - kalan / gecisSuresi(d));
+      ctx.globalAlpha = 1;
+      if (altyazilar.length) {
+        ai = sirada(altyazilar, t, ai);
+        const a = altyazilar[ai];
+        if (t >= a.bas && t < a.bit) altyaziCiz(ctx, a.metin, en, boy);
+      }
+    },
+  };
 }
 
 async function yenidenOrnekle(pcm, hiz, hedef) {
@@ -81,7 +179,7 @@ async function yenidenOrnekle(pcm, hiz, hedef) {
   return (await baglam.startRendering()).getChannelData(0);
 }
 
-async function hizliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme, iptal }, vAyar, sAyar) {
+async function hizliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ilerleme, iptal }, vAyar, sAyar) {
   const hedef = new ArrayBufferTarget();
   const muxer = new Muxer({
     target: hedef,
@@ -106,7 +204,13 @@ async function hizliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme, iptal 
     for (let i = 0; i < kareSayisi; i++) {
       if (hata) throw hata;
       if (iptal?.()) throw new Error("İptal edildi.");
-      kareCiz(ctx, gorseller, i / fps, sure, en, boy);
+      const t = i / fps;
+      const gerek = cizici.gerekenler(t);
+      for (const no of gerek) {
+        const yukleme = kaynak.hazirla(no, gerek);
+        if (yukleme) await yukleme;
+      }
+      cizici.ciz(ctx, t);
       const kare = new VideoFrame(tuval, { timestamp: Math.round(i * kareSuresi), duration: Math.round(kareSuresi) });
       video.encode(kare, { keyFrame: i % (fps * 2) === 0 });
       kare.close();
@@ -140,6 +244,7 @@ async function hizliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme, iptal 
         });
         kodlayici.encode(blok);
         blok.close();
+        while (kodlayici.encodeQueueSize > 8) await bekle(2);
       }
       await kodlayici.flush();
       kodlayici.close();
@@ -147,6 +252,7 @@ async function hizliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme, iptal 
     }
   } finally {
     if (video.state !== "closed") video.close();
+    tuval.width = tuval.height = 0;
   }
   muxer.finalize();
   ilerleme?.(1, "Tamamlandı");
@@ -154,9 +260,13 @@ async function hizliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme, iptal 
            yontem: `hızlı (WebCodecs, ${vAyar.codec}${sAyar ? " + AAC" : ", sessiz"})` };
 }
 
-async function gercekZamanliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme, iptal, sesBaglami }) {
+async function gercekZamanliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ilerleme, iptal, sesBaglami }) {
   const tur = kayitTuru();
   if (!tur) throw new Error("Bu cihazda video kaydı desteklenmiyor.");
+  const Baglam = window.AudioContext || window.webkitAudioContext;
+  const baglam = sesBaglami || (Baglam ? new Baglam() : null);
+  if (!baglam) throw new Error("Bu tarayıcıda ses API'si yok; gerçek zamanlı kayıt yapılamıyor.");
+  if (baglam.state === "suspended") await baglam.resume();
   const tuval = document.createElement("canvas");
   tuval.width = en;
   tuval.height = boy;
@@ -164,20 +274,17 @@ async function gercekZamanliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme
   tuval.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none";
   document.body.appendChild(tuval);
   const ctx = tuval.getContext("2d", { alpha: false });
-  kareCiz(ctx, gorseller, 0, sure, en, boy);
+  for (const no of cizici.gerekenler(0)) await kaynak.hazirla(no);
+  cizici.ciz(ctx, 0);
   const akis = tuval.captureStream(fps);
-  const Baglam = window.AudioContext || window.webkitAudioContext;
-  const baglam = sesBaglami || (Baglam ? new Baglam() : null);
-  if (!baglam) throw new Error("Bu tarayıcıda ses API'si yok; gerçek zamanlı kayıt yapılamıyor.");
-  if (baglam.state === "suspended") await baglam.resume();
-  let kaynak = null;
+  let sesKaynagi = null;
   if (ses) {
     const cikis = baglam.createMediaStreamDestination();
     const tampon = baglam.createBuffer(1, ses.pcm.length, ses.hiz);
     tampon.getChannelData(0).set(ses.pcm);
-    kaynak = baglam.createBufferSource();
-    kaynak.buffer = tampon;
-    kaynak.connect(cikis);
+    sesKaynagi = baglam.createBufferSource();
+    sesKaynagi.buffer = tampon;
+    sesKaynagi.connect(cikis);
     cikis.stream.getAudioTracks().forEach((iz) => akis.addTrack(iz));
   }
   const kayit = new MediaRecorder(akis, { mimeType: tur, videoBitsPerSecond: bitHizi(en, boy) });
@@ -190,13 +297,16 @@ async function gercekZamanliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme
   try {
     kayit.start(1000);
     const t0 = baglam.currentTime;
-    kaynak?.start();
+    sesKaynagi?.start();
     await new Promise((coz, red) => {
       const dongu = () => {
         const t = baglam.currentTime - t0;
         if (iptal?.()) return red(new Error("İptal edildi."));
         if (t >= sure) return coz();
-        kareCiz(ctx, gorseller, t, sure, en, boy);
+        // Sıradaki görsel arka planda yüklenir; gelmediyse o kare öncekiyle çizilir.
+        const gerek = cizici.gerekenler(t);
+        for (const no of gerek) kaynak.hazirla(no, gerek)?.catch(() => {});
+        cizici.ciz(ctx, t);
         ilerleme?.(t / sure, `Gerçek zamanlı kayıt: ${t.toFixed(0)} / ${sure.toFixed(0)} sn`);
         requestAnimationFrame(dongu);
       };
@@ -206,7 +316,7 @@ async function gercekZamanliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme
     await durdu;
   } finally {
     if (kayit.state !== "inactive") kayit.stop();
-    try { kaynak?.stop(); } catch { /* zaten bitti */ }
+    try { sesKaynagi?.stop(); } catch { /* zaten bitti */ }
     akis.getTracks().forEach((iz) => iz.stop());
     tuval.remove();
   }
@@ -217,26 +327,35 @@ async function gercekZamanliAktar({ gorseller, ses, en, boy, fps, sure, ilerleme
 }
 
 /**
- * Görselleri ve sesi videoya çevirir.
- * `gorseller`: çizilebilir kaynaklar (tuval / ImageBitmap); `ses`: `{ pcm, hiz }` ya da `null`;
- * `sure`: saniye (ses varsa sesin süresi); `yontem`: "oto" | "hizli" | "gercek".
- * Döner: `{ blob, uzanti, yontem, gecen }` (`gecen`: saniye).
+ * Zaman çizelgesini videoya çevirir.
+ *   dilimler  : `[{ bas, bit, gorselNo }]` saniye cinsinden, sıralı ve bitişik
+ *   gorselAl  : `async (gorselNo) => tuval | ImageBitmap` (ihtiyaç oldukça çağrılır)
+ *   ses       : `{ pcm: Float32Array, hiz }` ya da `null`
+ *   altyazilar: `[{ bas, bit, metin }]` (isteğe bağlı)
+ *   yontem    : "oto" | "hizli" | "gercek"
+ * Döner: `{ blob, uzanti, yontem, gecen, sure }` (süreler saniye).
  */
 export async function disaAktar(secenek) {
-  const s = { fps: 30, yontem: "oto", ...secenek };
-  if (!s.gorseller?.length) throw new Error("En az bir görsel gerekli.");
-  if (s.ses) s.sure = s.ses.pcm.length / s.ses.hiz;
+  const s = { fps: 30, yontem: "oto", altyazilar: [], ...secenek };
+  if (!s.dilimler?.length) throw new Error("En az bir görsel gerekli.");
+  s.sure = s.dilimler[s.dilimler.length - 1].bit;
   if (!(s.sure > 0)) throw new Error("Video süresi belirlenemedi.");
+  s.kaynak = gorselKaynagi(s.gorselAl);
+  s.cizici = kareCizici(s);
   const basla = performance.now();
   let sonuc;
-  const vAyar = s.yontem === "gercek" ? null : await videoAyari(s.en, s.boy, s.fps);
-  const sAyar = vAyar && s.ses ? await sesAyari() : null;
-  if (vAyar && (!s.ses || sAyar)) {
-    sonuc = await hizliAktar(s, vAyar, sAyar);
-  } else if (s.yontem === "hizli") {
-    throw new Error("Hızlı dışa aktarma bu cihazda desteklenmiyor (" + (vAyar ? "ses" : "video") + " kodlayıcısı yok).");
-  } else {
-    sonuc = await gercekZamanliAktar(s);
+  try {
+    const vAyar = s.yontem === "gercek" ? null : await videoAyari(s.en, s.boy, s.fps);
+    const sAyar = vAyar && s.ses ? await sesAyari() : null;
+    if (vAyar && (!s.ses || sAyar)) {
+      sonuc = await hizliAktar(s, vAyar, sAyar);
+    } else if (s.yontem === "hizli") {
+      throw new Error("Hızlı dışa aktarma bu cihazda desteklenmiyor (" + (vAyar ? "ses" : "video") + " kodlayıcısı yok).");
+    } else {
+      sonuc = await gercekZamanliAktar(s);
+    }
+  } finally {
+    s.kaynak.bosalt();
   }
   sonuc.gecen = (performance.now() - basla) / 1000;
   sonuc.sure = s.sure;

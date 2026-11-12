@@ -1,10 +1,11 @@
 // Gemini TTS: tarayıcıdan doğrudan REST çağrısı (Google bu API'de CORS'a izin verir).
 // Masaüstü StudioFlow'daki `saglayicilar/ses_gemini.py` ile aynı istek biçimi.
 import { base64Coz, dosyadanSes } from "./ses.js";
+import { zamanAsimi, zamanAsimiMi } from "./ag.js";
 
 const KOK = "https://generativelanguage.googleapis.com/v1beta";
 
-export const MODELLER = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview"];
+export const MODELLER = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
 export const SESLER = ("Kore Puck Charon Zephyr Fenrir Leda Orus Aoede Callirrhoe Autonoe Enceladus "
   + "Iapetus Umbriel Algieba Despina Erinome Algenib Rasalgethi Laomedeia Achernar Alnilam Schedar "
   + "Gacrux Pulcherrima Achird Zubenelgenubi Vindemiatrix Sadachbia Sadaltager Sulafat").split(" ");
@@ -53,7 +54,7 @@ function hataMetni(durum, govde) {
 
 /** Metni seslendirir: `{ pcm: Float32Array, hiz }` (tek kanal). */
 export async function seslendir({ anahtar, model, ses, dil, stil, metin }) {
-  if (!(anahtar || "").trim()) throw new Error("Önce Bağlantılar bölümüne Gemini anahtarını gir.");
+  if (!(anahtar || "").trim()) throw new Error("Önce Ayarlar bölümüne Gemini anahtarını gir.");
   if (!(metin || "").trim()) throw new Error("Seslendirilecek metni yaz.");
   const istem = istemKur(metin, dil, stil);
   let adres, govde;
@@ -69,9 +70,10 @@ export async function seslendir({ anahtar, model, ses, dil, stil, metin }) {
   }
   let yanit;
   try {
-    yanit = await fetch(adres, { method: "POST", body: JSON.stringify(govde),
+    yanit = await fetch(adres, { method: "POST", body: JSON.stringify(govde), signal: zamanAsimi(240_000),
       headers: { "x-goog-api-key": anahtar.trim(), "Content-Type": "application/json" } });
-  } catch {
+  } catch (hata) {
+    if (zamanAsimiMi(hata)) throw new Error("Gemini 4 dakikada yanıt vermedi. Biraz sonra yeniden dene; tamamlanan parçalar kayıtlı.");
     throw new Error("Gemini'ye bağlanılamadı (internet bağlantısını denetle).");
   }
   const veri = await yanit.json().catch(() => null);
@@ -102,4 +104,39 @@ export async function seslendir({ anahtar, model, ses, dil, stil, metin }) {
   let konum = 0;
   for (const p of parcalar) { pcm.set(p, konum); konum += p.length; }
   return { pcm, hiz };
+}
+
+// Gemini uzun okumalarda ara sıra "The audio stream could not be completed" der; geçicidir.
+const GECICI = /could not be completed|please retry|\((500|502|503|504)\)|internal error|overloaded|unavailable/i;
+
+/** Metni ortasına en yakın cümle (yoksa kelime) sınırından ikiye böler. */
+function ikiyeBol(metin) {
+  const m = metin.trim();
+  const orta = m.length / 2;
+  const bul = (desen) => [...m.matchAll(desen)].map((e) => e.index + e[0].length).filter((s) => s > 0 && s < m.length);
+  let sinirlar = bul(/[.!?。！？](?:\s+|$)|\n/g);
+  if (!sinirlar.length) sinirlar = bul(/\s+/g);
+  if (!sinirlar.length) return [m];
+  const kes = sinirlar.reduce((a, b) => (Math.abs(b - orta) < Math.abs(a - orta) ? b : a));
+  return [m.slice(0, kes).trim(), m.slice(kes).trim()];
+}
+
+/**
+ * `seslendir` gibi; Gemini okumayı yarıda keserse metni cümle sınırından ikiye bölüp yarıları
+ * ayrı okur ve birleştirir (en fazla iki kez iç içe). Kota ve yetki hataları olduğu gibi yükselir.
+ */
+export async function seslendirDayanikli(secenek, derinlik = 0) {
+  try {
+    return await seslendir(secenek);
+  } catch (hata) {
+    const yarilar = ikiyeBol(secenek.metin || "");
+    if (!GECICI.test(hata.message) || derinlik >= 2 || yarilar.length < 2) throw hata;
+    const [a, b] = [await seslendirDayanikli({ ...secenek, metin: yarilar[0] }, derinlik + 1),
+                    await seslendirDayanikli({ ...secenek, metin: yarilar[1] }, derinlik + 1)];
+    if (a.hiz !== b.hiz) throw new Error("Gemini ses parçalarının örnekleme hızları farklı.");
+    const pcm = new Float32Array(a.pcm.length + b.pcm.length);
+    pcm.set(a.pcm);
+    pcm.set(b.pcm, a.pcm.length);
+    return { pcm, hiz: a.hiz };
+  }
 }

@@ -6,8 +6,9 @@ dışa aktarma doğrudan telefonda yapılır.
 
 **Aç:** https://happyguppy1.github.io/StudioFlow-Mobil/
 
-> Bu bir **deneme sürümüdür** (0.1). Amacı, masaüstü StudioFlow'un temel adımlarının iPhone ve Android'de
-> çalıştığını doğrulamaktır: metni seslendir, görsel üret ya da ekle, ikisini videoya çevir, kaydet.
+> **Sürüm 0.2 (erken sürüm).** Masaüstü StudioFlow'un ana akışı telefonda: senaryoyu yaz ya da Gemini'ye
+> yazdır, sahnelere böl, sesi ve görselleri üret, videoyu oluştur. Projeler telefonda saklanır; yarıda
+> kalan üretim kaldığı yerden sürer.
 
 ## Telefona kurulum
 
@@ -20,12 +21,15 @@ kendiliğinden gelir.
 
 ## Kullanım
 
-1. **Bağlantılar:** Gemini API anahtarını gir ([Google AI Studio](https://aistudio.google.com/apikey)'dan
+1. **Ayarlar:** Gemini API anahtarını gir ([Google AI Studio](https://aistudio.google.com/apikey)'dan
    ücretsiz alınır). Görsel üretmek istersen Cloudflare bilgilerini de gir.
-2. **Seslendirme:** metni yaz, dili ve sesi seç, *Seslendir*'e bas. Hazır bir ses dosyası da seçebilirsin.
-3. **Görseller:** tarif yazıp *Görsel üret*'e bas ya da galeriden görsel ekle.
-4. **Video:** boyutu seç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile Fotoğraflar'a ya da
-   Dosyalar'a kaydet.
+2. **Projeler › Yeni proje › Senaryo:** anlatım metnini yaz ya da yapıştır; istersen konuyu yazıp
+   *Senaryoyu Gemini yazsın*'a bas. Dili, sesi ve biçimi (dikey / yatay) seç, *Sahnelere böl*'e bas.
+3. **Sahneler:** *Eksikleri üret* sırayla görsel tariflerini (prompt), seslendirmeyi ve görselleri üretir.
+   Her sahnenin anlatımını ve tarifini düzeltebilir, görselini yeniden üretebilir ya da galeriden
+   seçebilirsin. Metni değişen sahnenin yalnızca kendi ses parçası yeniden okunur.
+4. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile Fotoğraflar'a
+   ya da Dosyalar'a kaydet.
 
 Anahtarlar yalnızca telefonda (tarayıcı deposunda) saklanır. Bu depoya ya da herhangi bir sunucuya
 gönderilmez; istekler doğrudan Google'a ve kendi Cloudflare hesabına gider.
@@ -51,6 +55,12 @@ Aracı kurmak istemezsen görselleri galeriden ekleyebilirsin; seslendirme ve vi
   üretim sırasında ekranı açık tutar.
 - **Uzun videolar.** Video bellekte oluşturulur; kısa videolar (Shorts) sorunsuzdur, çok uzun videolar
   telefonun belleğini aşabilir.
+- **Zamanlama yaklaşıktır.** Seslendirme birkaç sahne tek istekte okunur (kota için); sahne geçişleri ve
+  altyazı süreleri metin uzunluğuna göre paylaştırılır, kelime kelime hizalanmaz.
+- **Görseller durağandır.** Sahneler yavaş yakınlaşma ve erime geçişiyle canlandırılır; masaüstündeki
+  görselden video üretimi (LTX) henüz yok.
+- **Projeler tarayıcı deposundadır.** Uygulamayı ana ekrana kur; Safari'de site verilerini silersen
+  projeler de silinir.
 - **Eski iPhone'lar.** iOS 26 öncesinde hızlı ses kodlayıcısı yoktur; uygulama kendiliğinden gerçek
   zamanlı kayda geçer (video süresi kadar sürer).
 - Sorun yaşarsan uygulamanın altındaki **Cihaz raporu**'nu kopyalayıp bir
@@ -68,7 +78,11 @@ ile klasörü sun ve `http://127.0.0.1:8765/` adresini aç.
 
 | Dosya | Görev |
 |---|---|
-| `js/app.js` | Arayüz |
+| `js/app.js` | Kabuk ve yönlendirme |
+| `js/gorunum/` | Ekranlar: projeler, proje (senaryo / sahneler / video), ayarlar |
+| `js/sahne.js` | Proje modeli: sahnelere bölme, ses planı, zamanlama, altyazı |
+| `js/depo.js` | Kalıcı depo (IndexedDB): projeler, görseller, ses |
+| `js/metin.js` | Gemini ile senaryo ve görsel prompt'u |
 | `js/gemini.js` | Gemini TTS ile seslendirme |
 | `js/cloudflare.js` | Cloudflare Workers AI ile görsel |
 | `js/disa_aktar.js` | Video dışa aktarma (WebCodecs; yedek: MediaRecorder) |

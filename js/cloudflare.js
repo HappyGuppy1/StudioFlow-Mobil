@@ -2,6 +2,7 @@
 // api.cloudflare.com tarayıcıdan gelen isteklere (CORS) izin vermez; bu yüzden istek
 // kullanıcının kendi Cloudflare Worker aracısından geçer (bkz. araci/cloudflare-araci.js).
 import { base64Coz } from "./ses.js";
+import { zamanAsimi, zamanAsimiMi } from "./ag.js";
 
 export const MODELLER = [
   { kimlik: "@cf/black-forest-labs/flux-2-klein-4b", ad: "FLUX.2 klein 4B (önerilen)", cokParcali: true, adim: 16 },
@@ -18,8 +19,8 @@ function gorselTuru(bayt) {
 
 /** Görsel üretir ve `Blob` döndürür. */
 export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }) {
-  if (!(araci || "").trim()) throw new Error("Cloudflare için aracı adresi gerekli (Bağlantılar bölümü). Galeriden görsel de ekleyebilirsin.");
-  if (!(hesap || "").trim() || !(token || "").trim()) throw new Error("Cloudflare Account ID ve token'ı Bağlantılar bölümüne gir.");
+  if (!(araci || "").trim()) throw new Error("Cloudflare için aracı adresi gerekli (Ayarlar bölümü). Galeriden görsel de ekleyebilirsin.");
+  if (!(hesap || "").trim() || !(token || "").trim()) throw new Error("Cloudflare Account ID ve token'ı Ayarlar bölümüne gir.");
   if (!(prompt || "").trim()) throw new Error("Görsel için bir tarif yaz.");
   const tanim = MODELLER.find((m) => m.kimlik === model) || MODELLER[0];
   const alanlar = { prompt: prompt.trim() };
@@ -40,8 +41,9 @@ export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }
   }
   let yanit;
   try {
-    yanit = await fetch(adres, istek);
-  } catch {
+    yanit = await fetch(adres, { ...istek, signal: zamanAsimi(300_000) });
+  } catch (hata) {
+    if (zamanAsimiMi(hata)) throw new Error("Cloudflare 5 dakikada yanıt vermedi. Yeniden dene.");
     throw new Error("Aracıya bağlanılamadı. Aracı adresini ve izinli kökeni denetle.");
   }
   const tur = (yanit.headers.get("Content-Type") || "").toLowerCase();
@@ -53,7 +55,9 @@ export async function gorselUret({ araci, hesap, token, model, prompt, en, boy }
     } catch { /* gövde JSON değil */ }
     const ipucu = { 401: "Token reddedildi.", 403: "Token'da Workers AI izni yok ya da köken izinli değil.",
                     404: "Account ID ya da model bulunamadı.", 429: "Kota ya da hız sınırı aşıldı." }[yanit.status] || "";
-    throw new Error(`Cloudflare hatası (${yanit.status}). ${ipucu} ${ayrinti}`.trim());
+    const hata = new Error(`Cloudflare hatası (${yanit.status}). ${ipucu} ${ayrinti}`.trim());
+    hata.durum = yanit.status;
+    throw hata;
   }
   if (tur.includes("json")) {
     const veri = await yanit.json();
