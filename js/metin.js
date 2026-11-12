@@ -103,7 +103,7 @@ const PROMPT_SISTEM =
   + "secondary group, placed explicitly ('behind them', 'in the background').\n"
   + "- The first sentence names the location and whether it is inside or outside.\n"
   + "- Describe the ground, vegetation and sky concretely. Never rely on season words alone.\n"
-  + "- Describe garments by shape, not only colour. Every person is fully clothed.\n"
+  + "- Describe garments by shape, not only colour.\n"
   + "- Use one lighting that matches the time of day.\n"
   + "- If the narration is abstract (a comment, a question, a summary), still show one concrete, "
   + "filmable moment that carries its meaning; never a copy of the previous frame.\n"
