@@ -134,22 +134,34 @@ function satirlaraBol(ctx, metin, azami) {
   return satirlar;
 }
 
+export const YAZI_TIPLERI = {
+  sans: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, Consolas, "Courier New", monospace',
+};
+
+/**
+ * Altyazıyı kareye yazar. `stil`: `{ boyut, seviye, renk, kalin, golge, font }` (masaüstündeki alanlarla aynı):
+ * boyut = yazı yüksekliği (tuval yüksekliğinin %'si), seviye = yazının alttan yüksekliği (%).
+ */
 function altyaziCiz(ctx, metin, en, boy, stil = {}) {
-  const punto = Math.round(Math.min(en, boy) * 0.062 * (stil.olcek || 1));
-  ctx.font = `700 ${punto}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const punto = Math.max(10, Math.round(boy * (stil.boyut || 4.5) / 100));
+  ctx.font = `${stil.kalin === false ? 500 : 700} ${punto}px ${YAZI_TIPLERI[stil.font] || YAZI_TIPLERI.sans}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
   const satirlar = satirlaraBol(ctx, metin, en * 0.86);
   const aralik = punto * 1.25;
-  const dikey = stil.konum === "ust" ? 0.14 : stil.konum === "orta" ? 0.5 : (en < boy ? 0.8 : 0.86);
-  const y0 = boy * dikey - (satirlar.length - 1) * aralik / 2;
-  ctx.lineWidth = punto * 0.24;
+  const y0 = boy * (1 - (stil.seviye ?? 12) / 100) - aralik / 2 - (satirlar.length - 1) * aralik;
+  ctx.lineWidth = punto * 0.2;
   ctx.strokeStyle = "rgba(0, 0, 0, .92)";
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = stil.renk || "#fff";
   satirlar.forEach((s, i) => {
-    ctx.strokeText(s, en / 2, y0 + i * aralik);
-    ctx.fillText(s, en / 2, y0 + i * aralik);
+    const y = y0 + i * aralik;
+    if (stil.golge !== false) { ctx.shadowColor = "rgba(0, 0, 0, .85)"; ctx.shadowBlur = punto * 0.3; ctx.shadowOffsetY = punto * 0.07; }
+    ctx.strokeText(s, en / 2, y);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.fillText(s, en / 2, y);
   });
 }
 
@@ -390,7 +402,7 @@ async function gercekZamanliAktar({ cizici, ses, en, boy, fps, sure, ilerleme, i
  *   gorselAl  : `async (no) => tuval | ImageBitmap` (ihtiyaç oldukça çağrılır)
  *   videoAl   : `async (no) => HTMLVideoElement` (yüklenmiş, sessiz; `birak()` varsa atılırken çağrılır)
  *   ses       : `{ pcm: Float32Array, hiz }` ya da `null`
- *   altyazilar: `[{ bas, bit, metin }]` (isteğe bağlı); altyaziStili: `{ olcek, konum: "alt" | "orta" | "ust" }`
+ *   altyazilar: `[{ bas, bit, metin }]` (isteğe bağlı); altyaziStili: `{ boyut, seviye, renk, kalin, golge, font }`
  *   yontem    : "oto" | "hizli" | "gercek"
  * Döner: `{ blob, uzanti, yontem, gecen, sure }` (süreler saniye).
  */
