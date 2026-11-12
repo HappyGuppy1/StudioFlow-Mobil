@@ -381,3 +381,9 @@ body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
 .ed-zc-kose, .ed-cetvel { height: 20px; }
 .ed-zc { max-height: 60px; }
 .ed-iz { grid-template-columns: 134px max-content; }
+
+/* Sahne paneli: yeniden üretme düğmeleri ikişerli ızgarada */
+.ed-islemler { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.editor .ed-islemler .dugme { flex: none; width: 100%; white-space: normal; line-height: 1.2; padding: 6px 6px; font-size: 12px; }
+.ed-islemler .dosya { grid-column: 1 / -1; }
+.ed-ust .dugme.birincil { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }

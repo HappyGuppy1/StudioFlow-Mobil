@@ -4,7 +4,7 @@ import { projeGorunumu } from "./gorunum/proje.js";
 import { ayarlarGorunumu } from "./gorunum/ayarlar.js";
 import { apiGorunumu } from "./gorunum/api.js";
 
-const SURUM = "0.9.0";
+const SURUM = "0.9.1";
 const el = (kimlik) => document.getElementById(kimlik);
 const kok = el("gorunum");
 

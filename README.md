@@ -27,7 +27,7 @@ kendiliğinden gelir.
    sıradakiyle sürülür.
 3. **Projeler › Yeni proje › Senaryo:** anlatım metnini yaz ya da yapıştır; istersen konuyu yazıp
    *Senaryoyu Gemini yazsın*'a bas. Dili, sesi ve biçimi seç, *Sahnelere böl*'e bas.
-4. **Sahneler:** *Eksikleri üret* sırayla görsel tariflerini, seslendirmeyi, görselleri ve (açıksa)
+4. **Sahneler:** *Kaldığın yerden devam et* sırayla eksik görsel tariflerini, seslendirmeyi, görselleri ve (açıksa)
    hareketli klipleri üretir. Her sahneyi ayrı ayrı düzeltebilir ya da galeriden görsel seçebilirsin.
 5. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile kaydet.
 

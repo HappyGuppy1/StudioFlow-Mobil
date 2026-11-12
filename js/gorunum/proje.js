@@ -98,7 +98,7 @@ export async function projeGorunumu(kok, id, kabuk) {
   const isAlani = h("div", { class: "ed-is", hidden: true }, isDurumu, durdur, isKapat, isCubugu);
 
   const adEtiketi = h("h1", { class: "ed-ad" }, P.ad);
-  const uretDugmesi = h("button", { class: "dugme birincil kucuk is-dugme", onclick: () => tumunuUret() }, "▶ Eksikleri üret");
+  const uretDugmesi = h("button", { class: "dugme birincil kucuk is-dugme", onclick: () => tumunuUret() }, "▶ Kaldığın yerden devam et");
   const ustCubuk = h("header", { class: "ed-ust" },
     h("button", { class: "ed-ikon", "aria-label": "Projelere dön", onclick: () => { location.hash = "#/"; } }, "‹"),
     adEtiketi, h("span", { class: "ed-ozet" }), h("span", { class: "bosluk" }), uretDugmesi,
@@ -197,7 +197,7 @@ export async function projeGorunumu(kok, id, kabuk) {
   const durduysa = () => { if (is.iptal) throw new Error("Durduruldu. Tamamlanan adımlar kaydedildi."); };
   // Hesap havuzu: kotası biten hesap atlanır, sıradakiyle sürer; geçişler iş satırına yazılır.
   const hesapla = (hizmet) => (isi) => havuz.hesaplarla(hizmet, isi, { bildir: (mesaj) => adim(mesaj), iptal: () => is.iptal });
-  const kilitle = (durum) => editor.querySelectorAll(".is-dugme").forEach((d) => { d.disabled = durum; });
+  const kilitle = (durum) => editor.querySelectorAll(".is-dugme").forEach((d) => { d.disabled = durum; });      // iş bitince `ciz()` gerçek durumları geri yazar
 
   async function calistir(is_) {
     if (is.calisiyor) return;
@@ -254,6 +254,18 @@ export async function projeGorunumu(kok, id, kabuk) {
     return yazilan;
   }
 
+  /** Bir ses parçasını okutup kaydeder; var olan parçanın üzerine ancak yenisi gelince yazılır. */
+  async function parcayiSeslendir(gorunum, parca) {
+    const ses = await hesapla("gemini")((hesap) => gemini.seslendirDayanikli({
+      anahtar: hesap.gemini_key, model: P.model, ses: P.ses, dil: gorunum.dil, stil: P.stil, metin: parca.metin }));
+    const ornek = new Int16Array(ses.pcm.length);
+    for (let i = 0; i < ornek.length; i++) ornek[i] = Math.max(-32768, Math.min(32767, Math.round(ses.pcm[i] * 32767)));
+    await depo.dosyalar.yaz(depo.sesAnahtari(P.id, parca.anahtar), { veri: ornek.buffer, hiz: ses.hiz });
+    gorunum.sesSureleri[parca.anahtar] = ses.pcm.length / ses.hiz;
+    oynatma.sesAnahtari = "";          // önizleme sesi yeniden kurulsun
+    await depo.projeler.yaz(P);
+  }
+
   /** Verilen dilin (varsayılan: asıl dil) eksik ses parçalarını üretir. */
   async function sesAdimi(kod = "") {
     const gorunum = gorunumAl(kod);
@@ -264,13 +276,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     for (const parca of eksik) {
       durduysa();
       adim(`${onek}: parça ${biten + 1} / ${eksik.length}`, biten / eksik.length);
-      const ses = await hesapla("gemini")((hesap) => gemini.seslendirDayanikli({
-        anahtar: hesap.gemini_key, model: P.model, ses: P.ses, dil: gorunum.dil, stil: P.stil, metin: parca.metin }));
-      const ornek = new Int16Array(ses.pcm.length);
-      for (let i = 0; i < ornek.length; i++) ornek[i] = Math.max(-32768, Math.min(32767, Math.round(ses.pcm[i] * 32767)));
-      await depo.dosyalar.yaz(depo.sesAnahtari(P.id, parca.anahtar), { veri: ornek.buffer, hiz: ses.hiz });
-      gorunum.sesSureleri[parca.anahtar] = ses.pcm.length / ses.hiz;
-      await depo.projeler.yaz(P);
+      await parcayiSeslendir(gorunum, parca);
       biten++;
     }
     // Metni değişen parçaların eski sesleri silinir (öbür dillerin sesleri korunur).
@@ -378,7 +384,13 @@ export async function projeGorunumu(kok, id, kabuk) {
     return biten;
   }
 
-  const tumunuUret = () => calistir(async () => {
+  const tumunuUret = () => {
+    if (is.calisiyor) return;
+    if (P.sahneler.length && !confirm("Kaldığın yerden devam edilsin mi?\n\nEksik görsel tarifleri, seslendirme, görseller"
+      + (P.hareketli ? ", klipler" : "") + (Object.keys(P.diller).length ? " ve dublajlar" : "") + " üretilir; hazır olanlara dokunulmaz. Kota harcar.")) return;
+    return calistir(tumunuIsi);
+  };
+  const tumunuIsi = async () => {
     if (!P.sahneler.length) throw new Error("Önce Metin bölümünde senaryoyu yazıp sahnelere böl.");
     geminiGerek();
     const ozet = [];
@@ -403,7 +415,7 @@ export async function projeGorunumu(kok, id, kabuk) {
       if (n) ozet.push(`${dilAdi(kod)} dublajı`);
     }
     return (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : "Her şey zaten hazır.") + not;
-  });
+  };
 
   // ── Görsel ve klip adresleri ────────────────────────────────────────────────
   async function kucukYukle(sahne) {
@@ -438,7 +450,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     let hiz = null;
     for (const p of plan) {
       const kayit = await depo.dosyalar.al(depo.sesAnahtari(P.id, p.anahtar));
-      if (!kayit) throw new Error("Ses dosyası eksik: “Eksikleri üret”e bas.");
+      if (!kayit) throw new Error("Ses dosyası eksik: “Kaldığın yerden devam et”e bas.");
       if (hiz !== null && kayit.hiz !== hiz) throw new Error("Ses parçalarının örnekleme hızları farklı; sesi yeniden üret.");
       hiz = kayit.hiz;
       parcalar.push(new Int16Array(kayit.veri));
@@ -698,7 +710,7 @@ export async function projeGorunumu(kok, id, kabuk) {
         P.hareketli ? satir("Klipler", P.sahneler.filter((s) => s.videoVar).length, P.sahneler.filter((s) => s.gorselVar).length) : null,
         Object.keys(P.diller).map((kod) => { const d = zamanlama(dilGorunumu(P, kod)); return satir(`${dilAdi(kod)} dublajı`, d.parcaSayisi - d.eksik, d.parcaSayisi); })),
       h("div", { class: "dugme-satiri" },
-        h("button", { class: "dugme birincil genis-dugme is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "▶ Eksikleri üret")),
+        h("button", { class: "dugme birincil genis-dugme is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "▶ Kaldığın yerden devam et")),
       aciklama("Sırayla eksik görsel tariflerini, seslendirmeyi, görselleri" + (P.hareketli ? ", klipleri" : "") + " ve dublajları üretir. Yarıda kalırsa kaldığı yerden sürer."),
     ];
   }
@@ -1012,7 +1024,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     const paylas = h("button", { class: "dugme kucuk", hidden: !sonVideo, onclick: videoKaydet }, "Kaydet / Paylaş");
     const hazirlik = !P.sahneler.length ? "Önce sahneleri oluştur."
       : !gorselli ? "En az bir sahnenin görseli olmalı."
-      : z.sesDurumu === "eksik" ? "Ses eksik: “Eksikleri üret”e bas."
+      : z.sesDurumu === "eksik" ? "Ses eksik: “Kaldığın yerden devam et”e bas."
       : kod && z.sesDurumu !== "tam" ? `${dilAdi(kod)} dublajının sesi yok: Dublaj bölümünden üret.` : "";
     const ne = { video: `${P.sahneler.length} sahne · ${gorselli} görsel`,
       seslendirme: kod ? "dublaj videoda olduğu için girmez" : zamanlama(P).sesDurumu === "tam" ? `${dilAdi("")} · ${sureYaz(zamanlama(P).toplam)}` : "ses yok",
@@ -1135,6 +1147,14 @@ export async function projeGorunumu(kok, id, kabuk) {
       try { await gorselKaydet(sahne, await depoyaHazirla(secilen)); cizZaman(); cizPanel(); } catch { alert("Bu görsel okunamadı."); }
     } });
     const metinDegisti = () => { kaydet(); cizZaman(); cizUst(); zamaniYaz(); };
+    // Ses birkaç sahnelik parçalar halinde okunur: bu sahnenin parçası ve içindeki sahne numaraları.
+    const sesGorunumu = G();
+    const sesParcasi = sesPlani(sesGorunumu).find((p) => p.sahneler.includes(sahne.id)) || null;
+    const sesVar = !!sesParcasi && sesGorunumu.sesSureleri[sesParcasi.anahtar] > 0;
+    const parcaNolari = sesParcasi ? sesParcasi.sahneler.map((sid) => P.sahneler.findIndex((x) => x.id === sid) + 1).join(", ") : "";
+    /** Sahne düğmesi: `soru()` metin döndürürse önce onay ister; iş sürerken ve `etkin` değilken kapalıdır. */
+    const sahneIsi = (etiket, etkin, soru, isi) => h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor || !etkin, "data-etkin": etkin ? "" : null,
+      onclick: () => { const metin = soru(); if (metin && !confirm(metin)) return; calistir(isi); } }, etiket);
     denetci.replaceChildren(...[
       h("div", { class: "ed-denetci-ust" },
         h("h2", null, `Sahne ${no}`),
@@ -1158,24 +1178,49 @@ export async function projeGorunumu(kok, id, kabuk) {
                                                            degisti: (v) => { sahne.prompt = v; kaydet(); } }),
       P.hareketli ? yaziAlani("Hareket tarifi (İngilizce)", sahne.hareket, { yerTutucu: ltx.VARSAYILAN_HAREKET, veri: { "data-hareket": "" },
                                                                           degisti: (v) => { sahne.hareket = v; kaydet(); } }) : null,
-      h("div", { class: "dugme-satiri" },
-        tekIs(sahne.gorselVar ? "Görseli yeniden üret" : "Görsel üret", async () => {
-          adim(`Sahne ${no} görseli üretiliyor…`);
-          await gorselUret(sahne);
-          return `Sahne ${no} görseli hazır.`;
-        }),
-        h("label", { class: "dugme kucuk dosya" }, "Galeriden", dosya),
-        tekIs("Tarif yaz", async () => {
-          if (!sahne.metin.trim()) throw new Error("Bu sahnenin anlatımı boş.");
-          await promptAdimi([sahne]);
-          return `Sahne ${no} için görsel tarifi yazıldı.`;
-        }),
-        P.hareketli && sahne.gorselVar ? tekIs(sahne.videoVar ? "Klibi yeniden üret" : "Klip üret", async () => {
-          if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: API sayfasından ekle.");
-          adim(`Sahne ${no} klibi üretiliyor…`);
-          await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
-          return `Sahne ${no} klibi hazır.`;
-        }) : null)].filter(Boolean));
+      // Sahne işlemleri: masaüstündeki gibi her biri önce ne olacağını sorar, yalnızca bu sahneyi etkiler.
+      h("p", { class: "soluk aciklama", "data-sahne-durum": "" }, [
+        `tarif ${(sahne.prompt || "").trim() ? "✓" : "—"}`, `ses ${sesVar ? "✓" : "—"}`,
+        `görsel ${sahne.gorselVar ? "✓" : "—"}`, P.hareketli ? `klip ${sahne.videoVar ? "✓" : "—"}` : ""].filter(Boolean).join(" · ")),
+      h("div", { class: "ed-islemler" },
+        sahneIsi(sesVar ? "🎙 Sesi yeniden üret" : "🎙 Ses üret", !!sesParcasi,
+          () => !sesVar ? "" : `Sahne ${no} sesi yeniden üretilsin mi?\n\n${sesParcasi.sahneler.length > 1
+            ? `Ses, ${sesParcasi.sahneler.length} sahnelik tek parça halinde okunuyor; bu sahnenin içinde olduğu parça (sahne ${parcaNolari}) yeniden okunur.`
+            : "Bu sahnenin sesi yeniden okunur."} 1 Gemini seslendirme isteği harcar${kod ? ` (${dilAdi(kod)} dublajı)` : ""}. Yenisi gelene kadar eski ses durur.`,
+          async () => {
+            geminiGerek();
+            adim(`Sahne ${no} sesi yeniden üretiliyor…`);
+            await parcayiSeslendir(sesGorunumu, sesParcasi);
+            return `Sahne ${no} sesi ${sesVar ? "yenilendi" : "hazır"}${sesParcasi.sahneler.length > 1 ? ` (sahne ${parcaNolari} birlikte)` : ""}.`;
+          }),
+        sahneIsi((sahne.prompt || "").trim() ? "📝 Tarifi yeniden yaz" : "📝 Tarif yaz", !!sahne.metin.trim(),
+          () => ((sahne.prompt || "").trim()
+            ? `Sahne ${no} görsel tarifi yeniden yazılsın mı?\n\nŞimdiki tarifin üzerine yazılır (1 Gemini isteği). Görsel değişmez; yeni tarifle görsel için sonra “Görseli yeniden üret”e bas.` : ""),
+          async () => {
+            geminiGerek();
+            await promptAdimi([sahne]);
+            return `Sahne ${no} görsel tarifi yazıldı.` + (sahne.gorselVar ? " Görsel eski tarifle duruyor; yenilemek için “Görseli yeniden üret”e bas." : "");
+          }),
+        sahneIsi(sahne.gorselVar ? "🖼 Görseli yeniden üret" : "🖼 Görsel üret", true,
+          () => (sahne.gorselVar
+            ? `Sahne ${no} görseli yenilensin mi?\n\nGörsel${sahne.videoVar ? " ve klibi" : ""} silinir, aynı tarifle yenisi üretilir (görsel kotası harcar).` : ""),
+          async () => {
+            if (!havuz.hesapVar("cloudflare")) throw new Error("Cloudflare hesabı yok: API sayfasından ekle ya da galeriden görsel seç.");
+            const klipVardi = sahne.videoVar;
+            adim(`Sahne ${no} görseli üretiliyor…`);
+            await gorselUret(sahne);
+            return `Sahne ${no} görseli hazır.` + (klipVardi ? " Eski klip silindi; “Klibi yeniden üret” ya da “Kaldığın yerden devam et” ile yenilenir." : "");
+          }),
+        P.hareketli ? sahneIsi(sahne.videoVar ? "🎬 Klibi yeniden üret" : "🎬 Klip üret", sahne.gorselVar,
+          () => (sahne.videoVar
+            ? `Sahne ${no} klibi yeniden üretilsin mi?\n\nYalnızca bu sahnenin klibi yenilenir, aynı görselden üretilir (video kotası harcar). Yenisi gelene kadar eski klip durur.` : ""),
+          async () => {
+            if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: API sayfasından ekle.");
+            adim(`Sahne ${no} klibi üretiliyor…`);
+            await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
+            return `Sahne ${no} klibi hazır.`;
+          }) : null,
+        h("label", { class: "dugme kucuk dosya" }, "📁 Galeriden görsel", dosya))].filter(Boolean));
   }
 
   // ── Çizim ───────────────────────────────────────────────────────────────────
@@ -1247,7 +1292,7 @@ export async function projeGorunumu(kok, id, kabuk) {
       }),
       seslendirme: () => { const a = zamanlama(P); return a.sesDurumu === "tam"
         ? blok("ses" + (kod ? " soluk-blok" : ""), 0, a.toplam, `Seslendirme · ${dilAdi("")} · ${sureYaz(a.toplam)}`)
-        : bosIz(a.sesDurumu === "eksik" ? "ses eksik: Eksikleri üret" : "ses yok: Eksikleri üret", "uretim"); },
+        : bosIz(a.sesDurumu === "eksik" ? "ses eksik: devam et" : "ses yok: devam et", "uretim"); },
       dublaj: () => { if (!dublajVar()) return bosIz("dublaj yok", "dublaj");
         const d = zamanlama(dilGorunumu(P, P.dublajSecili));
         return d.sesDurumu === "tam" ? blok("dublaj", 0, d.toplam, `Dublaj · ${dilAdi(P.dublajSecili)} · ${sureYaz(d.toplam)}`) : bosIz(`${dilAdi(P.dublajSecili)} dublajının sesi yok`, "dublaj"); },
