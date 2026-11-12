@@ -28,7 +28,7 @@ kendiliğinden gelir.
 3. **Projeler › Yeni proje › Senaryo:** anlatım metnini yaz ya da yapıştır; istersen konuyu yazıp
    *Senaryoyu Gemini yazsın*'a bas. Dili, sesi ve biçimi seç, *Sahnelere böl*'e bas.
 4. **Sahneler:** *Kaldığın yerden devam et* sırayla eksik görsel tariflerini, seslendirmeyi, görselleri ve (açıksa)
-   hareket tariflerini üretir. Klipler açıksa kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra
+   video prompt'larını üretir. Görsel tarifi olmayan sahnenin görseli, video prompt'u olmayan sahnenin klibi üretilmez. Klipler açıksa kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra
    **Üretim › Görselleri onayla** ile klipleri başlat. Her sahneyi ayrı ayrı düzeltebilir ya da galeriden görsel seçebilirsin.
 5. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile kaydet.
 

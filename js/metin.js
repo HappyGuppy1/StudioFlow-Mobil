@@ -118,39 +118,69 @@ const PROMPT_SISTEM =
   + '{"index": <int>, "image_prompt": "<string>"}.';
 
 /**
+ * Bir sahne grubunu tek istekte yazdırır. Gemini içerik filtresi grubu reddederse sahneler tek tek denenir;
+ * tek sahne de reddedilirse `sadeIstek` (bağlamı azaltılmış istek) ile bir kez daha denenir.
+ * Döner: `{ kayitlar: [{ index, … }], reddedilen: [index…] }`. Filtre dışındaki hatalar yükselir.
+ */
+async function gruplaYaz(anahtar, sistem, grup, istek, sadeIstek, bicimHatasi) {
+  const dene = async (liste, kur) => {
+    const kayitlar = jsonCoz(await uret(anahtar, sistem, kur(liste), true));
+    if (!Array.isArray(kayitlar)) throw new Error(bicimHatasi);
+    return kayitlar;
+  };
+  const filtreyse = (hata) => { if (hata.tur !== "filtre") throw hata; return null; };
+  const hepsi = await dene(grup, istek).catch(filtreyse);
+  if (hepsi) return { kayitlar: hepsi, reddedilen: [] };
+  const kayitlar = [], reddedilen = [];
+  for (const s of grup) {
+    let tek = grup.length > 1 ? await dene([s], istek).catch(filtreyse) : null;
+    if (!tek) tek = await dene([s], sadeIstek).catch(filtreyse);
+    if (tek?.[0]) kayitlar.push({ ...tek[0], index: s.index }); else reddedilen.push(s.index);
+  }
+  return { kayitlar, reddedilen };
+}
+
+/**
  * Sahneler için görsel prompt'ları yazar. `sahneler`: `[{ index, metin }]` (yazılacaklar);
- * `onceki`: daha önce yazılmış `[{ index, prompt }]` (süreklilik için). `bildir(sahne, prompt, hareket)`
+ * `onceki`: daha önce yazılmış `[{ index, prompt }]` (süreklilik için). `bildir(sahne, prompt)`
  * her grup bittikçe çağrılır, böylece yarıda kesilse de yazılanlar kalır.
+ * Döner: içerik filtresi yüzünden yazılamayan sahne numaraları.
  */
 export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, onceki = [], bildir, iptal }) {
-  const yazilan = [...onceki];
+  const yazilan = [...onceki], reddedilen = [];
   for (let i = 0; i < sahneler.length; i += GRUP) {
     if (iptal?.()) throw new Error("Durduruldu.");
     const grup = sahneler.slice(i, i + GRUP);
-    const bloklar = [
-      `Narration language: ${DILLER[dil] || "English"}`,
-      `Overall visual style (appended by the app, do not repeat): ${stil || "cinematic, photorealistic"}`,
-      "Full narration (context only; write prompts only for the segments listed below): "
-        + tamMetin.replace(/\s+/g, " ").trim(),
-    ];
     const son = yazilan.slice(-4);
-    if (son.length) {
-      bloklar.push("Prompts already written for other segments of this same video (keep continuity):");
-      for (const k of son) bloklar.push(`Segment ${k.index} image: ${k.prompt.replace(/\s+/g, " ")}`);
-    }
-    bloklar.push(`There are ${grup.length} segments; write a prompt for each one.`, "");
-    for (const s of grup) bloklar.push(`Segment ${s.index}: ${s.metin}`);
-    const kayitlar = jsonCoz(await uret(anahtar, PROMPT_SISTEM, bloklar.join("\n"), true));
-    if (!Array.isArray(kayitlar)) throw new Error("Gemini prompt'ları beklenen biçimde döndürmedi. Yeniden dene.");
+    // `sade`: yalnızca sahnenin kendi metni (bütün anlatım ve önceki tarifler gönderilmez).
+    const istek = (sade) => (liste) => {
+      const bloklar = [
+        `Narration language: ${DILLER[dil] || "English"}`,
+        `Overall visual style (appended by the app, do not repeat): ${stil || "cinematic, photorealistic"}`];
+      if (!sade) {
+        bloklar.push("Full narration (context only; write prompts only for the segments listed below): " + tamMetin.replace(/\s+/g, " ").trim());
+        if (son.length) {
+          bloklar.push("Prompts already written for other segments of this same video (keep continuity):");
+          for (const k of son) bloklar.push(`Segment ${k.index} image: ${k.prompt.replace(/\s+/g, " ")}`);
+        }
+      }
+      bloklar.push(`There are ${liste.length} segments; write a prompt for each one.`, "");
+      for (const s of liste) bloklar.push(`Segment ${s.index}: ${s.metin}`);
+      return bloklar.join("\n");
+    };
+    const sonuc = await gruplaYaz(anahtar, PROMPT_SISTEM, grup, istek(false), istek(true), "Gemini prompt'ları beklenen biçimde döndürmedi. Yeniden dene.");
+    reddedilen.push(...sonuc.reddedilen);
     grup.forEach((s, sira) => {
-      const kayit = kayitlar.find((k) => k && String(k.index) === String(s.index)) || kayitlar[sira];
+      if (sonuc.reddedilen.includes(s.index)) return;
+      const kayit = sonuc.kayitlar.find((k) => k && String(k.index) === String(s.index)) || (sonuc.kayitlar.length === grup.length ? sonuc.kayitlar[sira] : null);
       const prompt = String(kayit?.image_prompt || "").trim();
       if (prompt) {
         yazilan.push({ index: s.index, prompt });
-        bildir?.(s, prompt, String(kayit?.video_prompt || "").trim());
+        bildir?.(s, prompt);
       }
     });
   }
+  return reddedilen;
 }
 
 const HAREKET_SISTEM =
@@ -166,27 +196,34 @@ const HAREKET_SISTEM =
   + '{"index": <int>, "video_prompt": "<string>"}.';
 
 /**
- * Sahnelerin hareket tariflerini (görselden videoya) yazar. `sahneler`: `[{ index, metin, prompt }]`;
- * `bildir(sahne, hareket)` her grup bittikçe çağrılır. Görsel tarifinden ayrı bir istektir: biri
- * reddedilirse öbürü etkilenmez.
+ * Sahnelerin video prompt'larını (görselden videoya hareket tarifi) yazar. `sahneler`: `[{ index, metin, prompt }]`;
+ * `bildir(sahne, hareket)` her grup bittikçe çağrılır. Görsel tarifinden ayrı bir istektir: biri reddedilirse
+ * öbürü etkilenmez. Döner: içerik filtresi yüzünden yazılamayan sahne numaraları.
  */
 export async function hareketleriYaz({ anahtar, sahneler, bildir, iptal }) {
+  const reddedilen = [];
   for (let i = 0; i < sahneler.length; i += 12) {
     if (iptal?.()) throw new Error("Durduruldu.");
     const grup = sahneler.slice(i, i + 12);
-    const bloklar = [`There are ${grup.length} segments; write a video_prompt for each one.`, ""];
-    for (const s of grup) {
-      bloklar.push(`Segment ${s.index} narration: ${s.metin.replace(/\s+/g, " ").trim()}`,
-                   `Segment ${s.index} still frame: ${(s.prompt || "").replace(/\s+/g, " ").trim()}`, "");
-    }
-    const kayitlar = jsonCoz(await uret(anahtar, HAREKET_SISTEM, bloklar.join("\n"), true));
-    if (!Array.isArray(kayitlar)) throw new Error("Gemini hareket tariflerini beklenen biçimde döndürmedi. Yeniden dene.");
+    // `sade`: anlatım gönderilmez, yalnızca karenin tarifi (video prompt'u için kare yeterlidir).
+    const istek = (sade) => (liste) => {
+      const bloklar = [`There are ${liste.length} segments; write a video_prompt for each one.`, ""];
+      for (const s of liste) {
+        if (!sade) bloklar.push(`Segment ${s.index} narration: ${s.metin.replace(/\s+/g, " ").trim()}`);
+        bloklar.push(`Segment ${s.index} still frame: ${(s.prompt || "").replace(/\s+/g, " ").trim()}`, "");
+      }
+      return bloklar.join("\n");
+    };
+    const sonuc = await gruplaYaz(anahtar, HAREKET_SISTEM, grup, istek(false), istek(true), "Gemini video prompt'larını beklenen biçimde döndürmedi. Yeniden dene.");
+    reddedilen.push(...sonuc.reddedilen);
     grup.forEach((s, sira) => {
-      const kayit = kayitlar.find((k) => k && String(k.index) === String(s.index)) || kayitlar[sira];
+      if (sonuc.reddedilen.includes(s.index)) return;
+      const kayit = sonuc.kayitlar.find((k) => k && String(k.index) === String(s.index)) || (sonuc.kayitlar.length === grup.length ? sonuc.kayitlar[sira] : null);
       const hareket = String(kayit?.video_prompt || "").replace(/\s+/g, " ").trim();
       if (hareket) bildir?.(s, hareket);
     });
   }
+  return reddedilen;
 }
 
 const CEVIRI_SISTEM =
