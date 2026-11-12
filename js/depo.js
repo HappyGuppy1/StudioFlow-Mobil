@@ -3,6 +3,7 @@
 //   projeler : proje kaydı (anahtar: id)
 //   dosyalar : `<projeId>:gorsel:<sahneId>` → { veri: ArrayBuffer, tur }
 //              `<projeId>:ses:<parçaAnahtarı>` → { veri: ArrayBuffer (16 bit PCM), hiz }
+//              `<projeId>:video:<sahneId>` → { veri: ArrayBuffer (MP4), tur }
 const AD = "studioflow-mobil";
 let _vt = null;
 
@@ -55,3 +56,4 @@ export function kaliciIste() {
 
 export const gorselAnahtari = (projeId, sahneId) => `${projeId}:gorsel:${sahneId}`;
 export const sesAnahtari = (projeId, parca) => `${projeId}:ses:${parca}`;
+export const videoAnahtari = (projeId, sahneId) => `${projeId}:video:${sahneId}`;

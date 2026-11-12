@@ -47,29 +47,61 @@ export function kayitTuru() {
   return turler.find((t) => MediaRecorder.isTypeSupported(t)) || null;
 }
 
-/** Görselleri ihtiyaç oldukça yükleyen, en fazla `sinir` tanesini bellekte tutan önbellek. */
-function gorselKaynagi(gorselAl, sinir = 3) {
+const AZAMI_YAVASLATMA = 1.3;      // klip sahnesinden kısaysa en fazla bu kadar yavaşlatılır
+const videoMu = (m) => typeof HTMLVideoElement !== "undefined" && m instanceof HTMLVideoElement;
+const medyaAnahtari = (d) => (d.tur === "video" ? "v" : "g") + d.no;
+
+/** Görselleri ve klipleri ihtiyaç oldukça yükleyen, en fazla `sinir` tanesini bellekte tutan önbellek. */
+function medyaKaynagi(gorselAl, videoAl, sinir = 3) {
   const hazir = new Map();
   const bekleyen = new Map();
-  const birak = (g) => { if (g instanceof HTMLCanvasElement) g.width = g.height = 0; };
+  const birak = (m) => {
+    if (videoMu(m)) { m.pause(); m.birak?.(); m.removeAttribute("src"); m.load(); }
+    else if (m instanceof HTMLCanvasElement) m.width = m.height = 0;
+  };
   return {
-    al: (no) => hazir.get(no) || null,
-    /** Yüklüyse `null`, değilse yüklenince çözülen söz döner. `koru`: atılmaması gerekenler. */
-    hazirla(no, koru = []) {
-      if (hazir.has(no)) return null;
-      if (!bekleyen.has(no)) {
-        bekleyen.set(no, gorselAl(no).then((g) => {
-          hazir.set(no, g);
+    al: (d) => hazir.get(medyaAnahtari(d)) || null,
+    /** Yüklüyse `null`, değilse yüklenince çözülen söz döner. `koru`: atılmaması gereken dilimler. */
+    hazirla(d, koru = []) {
+      const anahtar = medyaAnahtari(d);
+      if (hazir.has(anahtar)) return null;
+      if (!bekleyen.has(anahtar)) {
+        const korunan = koru.map(medyaAnahtari);
+        bekleyen.set(anahtar, (d.tur === "video" ? videoAl(d.no) : gorselAl(d.no)).then((m) => {
+          hazir.set(anahtar, m);
           for (const eski of [...hazir.keys()]) {
             if (hazir.size <= sinir) break;
-            if (eski !== no && !koru.includes(eski)) { birak(hazir.get(eski)); hazir.delete(eski); }
+            if (eski !== anahtar && !korunan.includes(eski)) { birak(hazir.get(eski)); hazir.delete(eski); }
           }
-        }).finally(() => bekleyen.delete(no)));
+        }).finally(() => bekleyen.delete(anahtar)));
       }
-      return bekleyen.get(no);
+      return bekleyen.get(anahtar);
     },
-    bosalt() { for (const g of hazir.values()) birak(g); hazir.clear(); },
+    bosalt() { for (const m of hazir.values()) birak(m); hazir.clear(); },
   };
+}
+
+/** Klip sahneden kısaysa önce yavaşlatılır (en fazla 1,3 kat), kalan süre son kareyle dolar; uzunsa kesilir. */
+const klipKati = (d, v) => Math.min(AZAMI_YAVASLATMA, Math.max(1, (d.bit - d.bas) / (v.duration || 1)));
+const klipZamani = (d, v, t) => Math.min(Math.max(0, (v.duration || 0) - 0.05), Math.max(0, t - d.bas) / klipKati(d, v));
+
+/** Duraklatılmış klibi verilen ana götürür; kare hazır olunca çözülür. */
+function ara(v, zaman) {
+  if (Math.abs(v.currentTime - zaman) < 0.004 && v.readyState >= 2 && !v.seeking) return null;
+  return new Promise((coz, red) => {
+    const bitir = (hata) => {
+      clearTimeout(sayac);
+      v.removeEventListener("seeked", tamam);
+      v.removeEventListener("error", bozuk);
+      if (hata) red(hata); else coz();
+    };
+    const tamam = () => bitir();
+    const bozuk = () => bitir(new Error("Klip okunamadı."));
+    const sayac = setTimeout(tamam, 3000);      // tarayıcı olayı yutarsa takılıp kalmasın
+    v.addEventListener("seeked", tamam);
+    v.addEventListener("error", bozuk);
+    v.currentTime = zaman;
+  });
 }
 
 function sirada(liste, t, ipucu) {
@@ -125,27 +157,57 @@ function altyaziCiz(ctx, metin, en, boy) {
  * uzaklaşır, bir sonraki dilime eriyerek geçer; varsa o anın altyazısı üste yazılır.
  */
 function kareCizici({ dilimler, altyazilar, en, boy, kaynak }) {
-  let di = 0, ai = 0;
+  let di = 0, ai = 0, oynayan = null;
   const gecisSuresi = (d) => Math.min(0.5, (d.bit - d.bas) / 4);
   const dilimCiz = (ctx, k, t, alfa) => {
     const d = dilimler[k];
-    const g = kaynak.al(d.gorselNo);
-    if (!g) return;
+    const m = kaynak.al(d);
+    if (!m) return;
+    const klip = videoMu(m);
+    const mw = klip ? m.videoWidth : m.width, mh = klip ? m.videoHeight : m.height;
+    if (!mw || !mh || (klip && m.readyState < 2)) return;
     const p = Math.min(1, Math.max(0, (t - d.bas) / (d.bit - d.bas)));
-    const yakinlik = 1 + 0.1 * (k % 2 ? 1 - p : p);
-    const olcek = Math.max(en / g.width, boy / g.height) * yakinlik;
-    const w = g.width * olcek, h = g.height * olcek;
+    const yakinlik = klip ? 1 : 1 + 0.1 * (k % 2 ? 1 - p : p);     // klip zaten hareketli
+    const olcek = Math.max(en / mw, boy / mh) * yakinlik;
+    const w = mw * olcek, h = mh * olcek;
     ctx.globalAlpha = alfa;
-    ctx.drawImage(g, (en - w) / 2, (boy - h) / 2, w, h);
+    ctx.drawImage(m, (en - w) / 2, (boy - h) / 2, w, h);
+  };
+  /** `t` anında çizilecek dilimler (geçiş sırasında iki tane). */
+  const gerekenler = (t) => {
+    di = sirada(dilimler, t, di);
+    const d = dilimler[di];
+    const liste = [d];
+    if (di < dilimler.length - 1 && d.bit - t < gecisSuresi(d)) liste.push(dilimler[di + 1]);
+    return liste;
   };
   return {
-    /** `t` anında çizilecek görsel numaraları (geçiş sırasında iki tane). */
-    gerekenler(t) {
-      di = sirada(dilimler, t, di);
-      const d = dilimler[di];
-      const liste = [d.gorselNo];
-      if (di < dilimler.length - 1 && d.bit - t < gecisSuresi(d)) liste.push(dilimler[di + 1].gorselNo);
-      return liste;
+    /** Hızlı yol: `t` karesi için medyayı yükler ve klipleri tam o ana götürür. */
+    async hazirla(t) {
+      const gerek = gerekenler(t);
+      for (const d of gerek) {
+        const yukleme = kaynak.hazirla(d, gerek);
+        if (yukleme) await yukleme;
+        const m = kaynak.al(d);
+        if (videoMu(m)) {
+          const arama = ara(m, klipZamani(d, m, t));
+          if (arama) await arama;
+        }
+      }
+    },
+    /** Gerçek zamanlı yol: medya arka planda yüklenir, o anki klip oynatılır (beklemeden). */
+    canli(t) {
+      const gerek = gerekenler(t);
+      for (const d of gerek) kaynak.hazirla(d, gerek)?.catch(() => {});
+      const d = gerek[0];
+      const m = kaynak.al(d);
+      if (oynayan && oynayan.d !== d) { oynayan.m.pause(); oynayan = null; }
+      if (videoMu(m) && !oynayan) {
+        oynayan = { d, m };
+        m.playbackRate = 1 / klipKati(d, m);
+        m.currentTime = klipZamani(d, m, t);
+        m.play().catch(() => {});
+      }
     },
     ciz(ctx, t) {
       di = sirada(dilimler, t, di);
@@ -179,7 +241,7 @@ async function yenidenOrnekle(pcm, hiz, hedef) {
   return (await baglam.startRendering()).getChannelData(0);
 }
 
-async function hizliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ilerleme, iptal }, vAyar, sAyar) {
+async function hizliAktar({ cizici, ses, en, boy, fps, sure, ilerleme, iptal }, vAyar, sAyar) {
   const hedef = new ArrayBufferTarget();
   const muxer = new Muxer({
     target: hedef,
@@ -205,11 +267,7 @@ async function hizliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ilerleme, i
       if (hata) throw hata;
       if (iptal?.()) throw new Error("İptal edildi.");
       const t = i / fps;
-      const gerek = cizici.gerekenler(t);
-      for (const no of gerek) {
-        const yukleme = kaynak.hazirla(no, gerek);
-        if (yukleme) await yukleme;
-      }
+      await cizici.hazirla(t);
       cizici.ciz(ctx, t);
       const kare = new VideoFrame(tuval, { timestamp: Math.round(i * kareSuresi), duration: Math.round(kareSuresi) });
       video.encode(kare, { keyFrame: i % (fps * 2) === 0 });
@@ -260,7 +318,7 @@ async function hizliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ilerleme, i
            yontem: `hızlı (WebCodecs, ${vAyar.codec}${sAyar ? " + AAC" : ", sessiz"})` };
 }
 
-async function gercekZamanliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ilerleme, iptal, sesBaglami }) {
+async function gercekZamanliAktar({ cizici, ses, en, boy, fps, sure, ilerleme, iptal, sesBaglami }) {
   const tur = kayitTuru();
   if (!tur) throw new Error("Bu cihazda video kaydı desteklenmiyor.");
   const Baglam = window.AudioContext || window.webkitAudioContext;
@@ -274,7 +332,7 @@ async function gercekZamanliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ile
   tuval.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none";
   document.body.appendChild(tuval);
   const ctx = tuval.getContext("2d", { alpha: false });
-  for (const no of cizici.gerekenler(0)) await kaynak.hazirla(no);
+  await cizici.hazirla(0);
   cizici.ciz(ctx, 0);
   const akis = tuval.captureStream(fps);
   let sesKaynagi = null;
@@ -303,9 +361,8 @@ async function gercekZamanliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ile
         const t = baglam.currentTime - t0;
         if (iptal?.()) return red(new Error("İptal edildi."));
         if (t >= sure) return coz();
-        // Sıradaki görsel arka planda yüklenir; gelmediyse o kare öncekiyle çizilir.
-        const gerek = cizici.gerekenler(t);
-        for (const no of gerek) kaynak.hazirla(no, gerek)?.catch(() => {});
+        // Sıradaki medya arka planda yüklenir; gelmediyse o kare öncekiyle çizilir.
+        cizici.canli(t);
         cizici.ciz(ctx, t);
         ilerleme?.(t / sure, `Gerçek zamanlı kayıt: ${t.toFixed(0)} / ${sure.toFixed(0)} sn`);
         requestAnimationFrame(dongu);
@@ -328,8 +385,9 @@ async function gercekZamanliAktar({ cizici, kaynak, ses, en, boy, fps, sure, ile
 
 /**
  * Zaman çizelgesini videoya çevirir.
- *   dilimler  : `[{ bas, bit, gorselNo }]` saniye cinsinden, sıralı ve bitişik
- *   gorselAl  : `async (gorselNo) => tuval | ImageBitmap` (ihtiyaç oldukça çağrılır)
+ *   dilimler  : `[{ bas, bit, tur: "gorsel" | "video", no }]` saniye cinsinden, sıralı ve bitişik
+ *   gorselAl  : `async (no) => tuval | ImageBitmap` (ihtiyaç oldukça çağrılır)
+ *   videoAl   : `async (no) => HTMLVideoElement` (yüklenmiş, sessiz; `birak()` varsa atılırken çağrılır)
  *   ses       : `{ pcm: Float32Array, hiz }` ya da `null`
  *   altyazilar: `[{ bas, bit, metin }]` (isteğe bağlı)
  *   yontem    : "oto" | "hizli" | "gercek"
@@ -340,7 +398,7 @@ export async function disaAktar(secenek) {
   if (!s.dilimler?.length) throw new Error("En az bir görsel gerekli.");
   s.sure = s.dilimler[s.dilimler.length - 1].bit;
   if (!(s.sure > 0)) throw new Error("Video süresi belirlenemedi.");
-  s.kaynak = gorselKaynagi(s.gorselAl);
+  s.kaynak = medyaKaynagi(s.gorselAl, s.videoAl);
   s.cizici = kareCizici(s);
   const basla = performance.now();
   let sonuc;

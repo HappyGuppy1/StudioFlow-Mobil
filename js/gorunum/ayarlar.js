@@ -8,6 +8,9 @@ const ALANLAR = [
   ["cfHesap", "Cloudflare Account ID (görsel)", "text"],
   ["cfToken", "Cloudflare API token", "password"],
   ["cfAraci", "Aracı adresi (Cloudflare Worker)", "url"],
+  ["hfToken", "Hugging Face token (görselden video, LTX)", "password"],
+  ["ltxSpaceler", "Kendi LTX Space'lerin (isteğe bağlı; virgülle ayır)", "text"],
+  ["ltxErisim", "Kendi Space erişim anahtarı (isteğe bağlı)", "password"],
 ];
 
 export async function ayarlarGorunumu(kok, kabuk, surum) {
@@ -24,7 +27,9 @@ export async function ayarlarGorunumu(kok, kabuk, surum) {
       "Gemini anahtarı ", h("a", { href: "https://aistudio.google.com/apikey", target: "_blank", rel: "noopener" }, "Google AI Studio"),
       "'dan ücretsiz alınır. Cloudflare tarayıcıdan doğrudan çağrıya izin vermediği için küçük bir aracı gerekir; kurulumu ",
       h("a", { href: "https://github.com/HappyGuppy1/StudioFlow-Mobil#cloudflare-aracısı", target: "_blank", rel: "noopener" }, "burada"),
-      " anlatılıyor. Aracı yoksa görselleri galeriden ekleyebilirsin."),
+      " anlatılıyor. Aracı yoksa görselleri galeriden ekleyebilirsin. Hugging Face token'ı görselleri hareketli klibe çevirmek içindir (",
+      h("a", { href: "https://huggingface.co/settings/tokens", target: "_blank", rel: "noopener" }, "token oluştur"),
+      "); kendi Space'in yoksa resmî LTX Space'i kullanılır ve ücretsiz GPU kotası günde birkaç kliple sınırlıdır."),
     h("div", { class: "satir" },
       h("button", { class: "dugme birincil", onclick: () => {
         const oldu = ayarGuncelle(Object.fromEntries(ALANLAR.map(([ad]) => [ad, girdiler[ad].value.trim()])));

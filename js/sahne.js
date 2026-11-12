@@ -7,7 +7,7 @@ export const VARSAYILAN_STIL = "Natural, warm documentary narration with varied 
 export const VARSAYILAN_GORSEL_STIL = "Photorealistic film still, shot on 35mm film, sharp focus, "
   + "natural skin texture, available light, high detail";
 export const SES_PARCA_SINIRI = 1600;   // Gemini TTS isteği başına karakter (masaüstüyle aynı)
-const SAHNE_HEDEF = 200;                // sahne başına hedef karakter (~12 sn anlatım)
+const SAHNE_HEDEF = 120;                // sahne başına hedef karakter (~8 sn anlatım; LTX klibi en fazla 8 sn)
 const SESSIZ_HIZ = 14;                  // ses yokken süre tahmini: saniyede karakter
 
 export const kimlik = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -31,11 +31,12 @@ export function yeniProje() {
     konu: "", hedefSaniye: 60, senaryo: "",
     dil: ayar.dil || "tr", ses: ayar.ses || "Charon", model: ayar.model || SES_MODELLERI[0], stil: VARSAYILAN_STIL,
     gorselStili: VARSAYILAN_GORSEL_STIL, gorselModel: ayar.gorselModel || GORSEL_MODELLERI[0].kimlik, boyut: ayar.boyut || "720x1280",
-    altyazi: false, sahneler: [], sesSureleri: {},
+    altyazi: false, hareketli: false, sahneler: [], sesSureleri: {},
   };
 }
 
-export const yeniSahne = (metin = "") => ({ id: kimlik(), metin, prompt: "", gorselVar: false, gorselSurum: 0 });
+export const yeniSahne = (metin = "") => ({
+  id: kimlik(), metin, prompt: "", hareket: "", gorselVar: false, gorselSurum: 0, videoVar: false, videoSurum: 0 });
 
 function cumleler(paragraf) {
   const sonuc = [];
@@ -65,7 +66,7 @@ export function sahnelereBol(senaryo, hedef = SAHNE_HEDEF) {
   // Tek başına kalan çok kısa parça (ör. "Ama neden?") önceki sahneye eklenir.
   const birlesik = [];
   for (const s of sahneler) {
-    if (birlesik.length && s.length < 40 && birlesik[birlesik.length - 1].length + s.length < hedef * 1.3) {
+    if (birlesik.length && s.length < 40 && birlesik[birlesik.length - 1].length + s.length <= hedef * 1.15) {
       birlesik[birlesik.length - 1] += " " + s;
     } else {
       birlesik.push(s);

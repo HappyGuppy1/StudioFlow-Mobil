@@ -3,7 +3,7 @@ import { kutuphaneGorunumu } from "./gorunum/kutuphane.js";
 import { projeGorunumu } from "./gorunum/proje.js";
 import { ayarlarGorunumu } from "./gorunum/ayarlar.js";
 
-const SURUM = "0.2.0";
+const SURUM = "0.3.0";
 const el = (kimlik) => document.getElementById(kimlik);
 const kok = el("gorunum");
 

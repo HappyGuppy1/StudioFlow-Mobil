@@ -1,13 +1,14 @@
 // Proje ekranı: Senaryo → Sahneler → Video.
 import { h, secenekler, durumYaz, geciktir, ekranAcik, sureYaz } from "../dom.js";
 import * as depo from "../depo.js";
-import { ayar, ayarGuncelle, cloudflareHazir } from "../ayar.js";
+import { ayar, ayarGuncelle, cloudflareHazir, ltxSpaceleri } from "../ayar.js";
+import * as ltx from "../video_ltx.js";
 import * as gemini from "../gemini.js";
 import * as cloudflare from "../cloudflare.js";
 import * as metinAI from "../metin.js";
 import { sahnelereBol, sesPlani, zamanlama, altyaziBloklari, gorselPromptu, uretimBoyutu, yeniSahne,
          SES_PARCA_SINIRI } from "../sahne.js";
-import { depoyaHazirla, videoTuvali, kayittanBlob } from "../gorsel.js";
+import { depoyaHazirla, videoTuvali, kayittanBlob, ltxKaresi, klipOgesi } from "../gorsel.js";
 import { sesBaglami, wavBlob } from "../ses.js";
 import { disaAktar } from "../disa_aktar.js";
 
@@ -85,12 +86,15 @@ export async function projeGorunumu(kok, id, kabuk) {
       onceki: P.sahneler.map((s, i) => ({ index: i + 1, prompt: s.prompt || "" }))
         .filter((k) => k.prompt.trim() && !hedefNo.has(k.index)),
       iptal: () => is.iptal,
-      bildir: (kayit, prompt) => {
+      bildir: (kayit, prompt, hareket) => {
         const sahne = P.sahneler[kayit.index - 1];
         sahne.prompt = prompt;
+        if (hareket) sahne.hareket = hareket;
         kaydet();
         const alan = govde.querySelector(`[data-prompt="${sahne.id}"]`);
         if (alan) alan.value = prompt;
+        const hareketAlani = govde.querySelector(`[data-hareket="${sahne.id}"]`);
+        if (hareketAlani && hareket) hareketAlani.value = hareket;
         adim(`Prompt'lar yazılıyor: ${++yazilan} / ${liste.length}`, yazilan / liste.length);
       },
     });
@@ -126,8 +130,42 @@ export async function projeGorunumu(kok, id, kabuk) {
     await depo.dosyalar.yaz(depo.gorselAnahtari(P.id, sahne.id), kayit);
     sahne.gorselVar = true;
     sahne.gorselSurum = (sahne.gorselSurum || 0) + 1;
+    if (sahne.videoVar) {       // görsel değişti: eski klip artık bu kareye ait değil
+      await depo.dosyalar.sil(depo.videoAnahtari(P.id, sahne.id));
+      sahne.videoVar = false;
+    }
     kaydet();
     await kucukYukle(sahne);
+  }
+
+  /** Sahnenin görselini LTX ile hareketli klibe çevirir; klip sahne süresine göre istenir. */
+  async function klipUret(sahne, bildir) {
+    const kayit = await depo.dosyalar.al(depo.gorselAnahtari(P.id, sahne.id));
+    if (!kayit) throw new Error("Önce bu sahnenin görselini üret.");
+    const zaman = zamanlama(P).sahneler.get(sahne.id);
+    const sahneSuresi = zaman ? zaman.bit - zaman.bas : 0;
+    const [en, boy] = P.boyut.split("x").map(Number);
+    const klip = await ltx.videoUret({
+      token: ayar.hfToken, spaceler: ltxSpaceleri(), erisim: ayar.ltxErisim || "",
+      gorsel: await ltxKaresi(kayit), prompt: sahne.hareket, dikey: en < boy,
+      sure: Math.min(ltx.SURE_UST, Math.max(2, Math.ceil((sahneSuresi || 5) * 2) / 2)),
+      bildir, iptal: () => is.iptal });
+    await depo.dosyalar.yaz(depo.videoAnahtari(P.id, sahne.id), { veri: await klip.arrayBuffer(), tur: "video/mp4" });
+    sahne.videoVar = true;
+    sahne.videoSurum = (sahne.videoSurum || 0) + 1;
+    await depo.projeler.yaz(P);
+  }
+
+  async function klipAdimi(hedefler) {
+    let biten = 0;
+    for (const sahne of hedefler) {
+      durduysa();
+      const onek = `Klip ${biten + 1} / ${hedefler.length}`;
+      adim(`${onek} üretiliyor…`, biten / hedefler.length);
+      await klipUret(sahne, (mesaj) => adim(`${onek} · ${mesaj.replace(/^LTX · /, "")}`, biten / hedefler.length));
+      biten++;
+    }
+    return biten;
   }
 
   async function gorselUret(sahne) {
@@ -169,8 +207,13 @@ export async function projeGorunumu(kok, id, kabuk) {
     if (ses) ozet.push(`${ses} ses parçası`);
     const gorselsiz = P.sahneler.filter((s) => !s.gorselVar);
     if (gorselsiz.length && cloudflareHazir()) ozet.push(`${await gorselAdimi(gorselsiz)} görsel`);
-    const not = gorselsiz.length && !cloudflareHazir()
+    let not = gorselsiz.length && !cloudflareHazir()
       ? " Görseller için Cloudflare ayarlı değil; galeriden ekleyebilirsin." : "";
+    if (P.hareketli) {
+      const klipsiz = P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim());
+      if (klipsiz.length && ayar.hfToken) ozet.push(`${await klipAdimi(klipsiz)} klip`);
+      else if (klipsiz.length) not += " Klipler için Hugging Face token'ı yok: Ayarlar bölümünden gir.";
+    }
     return (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : "Her şey zaten hazır.") + not;
   });
 
@@ -193,6 +236,15 @@ export async function projeGorunumu(kok, id, kabuk) {
   function alan(etiket, ad, ogeTuru, { degisti, ...ozellik } = {}, cocuklar = []) {
     const oge = h(ogeTuru, { ...ozellik, value: P[ad] ?? "", oninput: () => { P[ad] = oge.value; kaydet(); degisti?.(); } }, cocuklar);
     return h("label", null, etiket, oge);
+  }
+
+  function hareketKutusu() {
+    const kutu = h("input", { type: "checkbox", onchange: () => { P.hareketli = kutu.checked; kaydet(); } });
+    kutu.checked = !!P.hareketli;
+    return h("div", null,
+      h("label", { class: "onay" }, kutu, h("span", null, "Görselleri hareketlendir (LTX video)")),
+      h("p", { class: "soluk" }, "Her sahnenin görseli Hugging Face'teki LTX ile birkaç saniyelik klibe çevrilir. "
+        + "Klip başına yaklaşık 40 sn sürer ve Hugging Face GPU kotasından düşer; token Ayarlar'dan girilir."));
   }
 
   function senaryoPaneli() {
@@ -250,6 +302,7 @@ export async function projeGorunumu(kok, id, kabuk) {
         alan("Anlatım tarzı", "stil", "textarea", { rows: "2" }),
         alan("Görsel modeli", "gorselModel", "select", { degisti: tercih("gorselModel") }, secenekler(cloudflare.MODELLER.map((m) => [m.kimlik, m.ad]), P.gorselModel)),
         alan("Görsel stili (her prompt'a eklenir)", "gorselStili", "textarea", { rows: "3" }),
+        hareketKutusu(),
         h("p", { class: "soluk" }, "Ses, model ya da anlatım tarzı değişirse seslendirme yeniden üretilir.")));
   }
 
@@ -286,6 +339,7 @@ export async function projeGorunumu(kok, id, kabuk) {
         h("button", { class: "sahne-sil", "aria-label": `Sahne ${no} sil`, onclick: async () => {
           if (!confirm(`Sahne ${no} silinsin mi?`)) return;
           await depo.dosyalar.sil(depo.gorselAnahtari(P.id, sahne.id));
+          await depo.dosyalar.sil(depo.videoAnahtari(P.id, sahne.id));
           P.sahneler = P.sahneler.filter((s) => s !== sahne);
           kaydet();
           ciz();
@@ -301,6 +355,26 @@ export async function projeGorunumu(kok, id, kabuk) {
       h("label", null, "Görsel tarifi (İngilizce)",
         h("textarea", { rows: "3", "data-prompt": sahne.id, value: sahne.prompt || "", placeholder: "Boş bırakırsan anlatımdan üretilir.",
                         oninput: (o) => { sahne.prompt = o.target.value; kaydet(); } })),
+      P.hareketli ? h("label", null, "Hareket tarifi (İngilizce)",
+        h("textarea", { rows: "2", "data-hareket": sahne.id, value: sahne.hareket || "", placeholder: ltx.VARSAYILAN_HAREKET,
+                        oninput: (o) => { sahne.hareket = o.target.value; kaydet(); } })) : null,
+      P.hareketli && sahne.gorselVar ? h("div", { class: "satir" },
+        h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
+          if (!ayar.hfToken) throw new Error("Hugging Face token'ı yok: Ayarlar bölümünden gir.");
+          adim(`Sahne ${no} klibi üretiliyor…`);
+          await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
+          return `Sahne ${no} klibi hazır.`;
+        }) }, sahne.videoVar ? "Klibi yeniden üret" : "Klip üret"),
+        sahne.videoVar ? h("button", { class: "dugme kucuk", onclick: async (o) => {
+          const kart = o.target.closest(".sahne");
+          const eski = kart.querySelector("video");
+          if (eski) return eski.remove();
+          const kayit = await depo.dosyalar.al(depo.videoAnahtari(P.id, sahne.id));
+          if (!kayit) return;
+          const adres = URL.createObjectURL(new Blob([kayit.veri], { type: "video/mp4" }));
+          adresler.add(adres);
+          kart.append(h("video", { src: adres, controls: true, playsinline: true, muted: true, autoplay: true, loop: true }));
+        } }, "Klibi izle") : null) : null,
       h("div", { class: "satir" },
         h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
           adim(`Sahne ${no} görseli üretiliyor…`);
@@ -338,7 +412,8 @@ export async function projeGorunumu(kok, id, kabuk) {
     for (const sahne of P.sahneler) if (sahne.gorselVar) kucukYukle(sahne).catch(() => {});
     return h("div", { class: "sayfa" },
       h("section", { class: "kart" },
-        h("div", { class: "ozet-satir" }, h("span", null, `${P.sahneler.length} sahne · ${gorselli} görsel`), sesSatiri,
+        h("div", { class: "ozet-satir" }, h("span", null, `${P.sahneler.length} sahne · ${gorselli} görsel`
+          + (P.hareketli ? ` · ${P.sahneler.filter((s) => s.videoVar).length} klip` : "")), sesSatiri,
           z.sesDurumu === "tam" ? dinle : null),
         oynatici,
         h("div", { class: "satir" },
@@ -348,7 +423,7 @@ export async function projeGorunumu(kok, id, kabuk) {
             const n = await sesAdimi();
             return n ? `${n} ses parçası üretildi.` : "Ses zaten hazır.";
           }) }, "Yalnızca ses")),
-        h("p", { class: "soluk" }, "“Eksikleri üret” sırayla eksik prompt'ları, sesi ve görselleri üretir. Yarıda kalırsa kaldığı yerden sürer.")),
+        h("p", { class: "soluk" }, `“Eksikleri üret” sırayla eksik prompt'ları, sesi${P.hareketli ? ", görselleri ve klipleri" : " ve görselleri"} üretir. Yarıda kalırsa kaldığı yerden sürer.`)),
       P.sahneler.map((s, i) => sahneKarti(s, i + 1, z)),
       h("div", { class: "satir" },
         h("button", { class: "dugme", onclick: () => { P.sahneler.push(yeniSahne()); kaydet(); ciz(); } }, "＋ Sahne ekle")));
@@ -383,10 +458,14 @@ export async function projeGorunumu(kok, id, kabuk) {
     P.sahneler.forEach((sahne, i) => {
       const { bas, bit } = z.sahneler.get(sahne.id);
       if (bit - bas <= 0) return;
-      const onceki = gorselli.filter((g) => g <= i).pop();
-      const no = onceki ?? gorselli[0];
-      const son = dilimler[dilimler.length - 1];
-      if (son && son.gorselNo === no) son.bit = bit; else dilimler.push({ bas, bit, gorselNo: no });
+      if (P.hareketli && sahne.videoVar) {
+        dilimler.push({ bas, bit, tur: "video", no: i });
+      } else {
+        const onceki = gorselli.filter((g) => g <= i).pop();
+        const no = onceki ?? gorselli[0];
+        const son = dilimler[dilimler.length - 1];
+        if (son && son.tur === "gorsel" && son.no === no) son.bit = bit; else dilimler.push({ bas, bit, tur: "gorsel", no });
+      }
       if (P.altyazi && sahne.metin.trim()) altyazilar.push(...altyaziBloklari(sahne.metin, bas, bit));
     });
     return { dilimler, altyazilar };
@@ -422,6 +501,11 @@ export async function projeGorunumu(kok, id, kabuk) {
           const sonuc = await disaAktar({
             dilimler, altyazilar, ses, en, boy, yontem: yontem.value, sesBaglami: baglam,
             gorselAl: async (no) => videoTuvali(await depo.dosyalar.al(depo.gorselAnahtari(P.id, P.sahneler[no].id)), en, boy),
+            videoAl: async (no) => {
+              const kayit = await depo.dosyalar.al(depo.videoAnahtari(P.id, P.sahneler[no].id));
+              if (!kayit) throw new Error(`Sahne ${no + 1} klibi eksik; yeniden üret.`);
+              return klipOgesi(kayit);
+            },
             iptal: () => is.iptal,
             ilerleme: (oran, metin) => { cubuk.value = oran; durumYaz(durum, metin); },
           });

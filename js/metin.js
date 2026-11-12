@@ -101,12 +101,15 @@ const PROMPT_SISTEM =
   + "- The picture fills the whole frame edge to edge: never a border, frame, caption or panel.\n"
   + "Keep continuity across segments: same characters, wardrobe, palette, location and era; "
   + "advance the visible action with each segment.\n"
+  + "Also write video_prompt in English for each segment: an image-to-video motion prompt of 15 to "
+  + "30 words describing how that same still frame moves for a few seconds (one subject action, "
+  + "one gentle camera move, pace). It must not introduce new subjects or change the scene.\n"
   + "Reply ONLY with a JSON array. Every element must be exactly: "
-  + '{"index": <int>, "image_prompt": "<string>"}.';
+  + '{"index": <int>, "image_prompt": "<string>", "video_prompt": "<string>"}.';
 
 /**
  * Sahneler için görsel prompt'ları yazar. `sahneler`: `[{ index, metin }]` (yazılacaklar);
- * `onceki`: daha önce yazılmış `[{ index, prompt }]` (süreklilik için). `bildir(sahne, prompt)`
+ * `onceki`: daha önce yazılmış `[{ index, prompt }]` (süreklilik için). `bildir(sahne, prompt, hareket)`
  * her grup bittikçe çağrılır, böylece yarıda kesilse de yazılanlar kalır.
  */
 export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, onceki = [], bildir, iptal }) {
@@ -134,7 +137,7 @@ export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, on
       const prompt = String(kayit?.image_prompt || "").trim();
       if (prompt) {
         yazilan.push({ index: s.index, prompt });
-        bildir?.(s, prompt);
+        bildir?.(s, prompt, String(kayit?.video_prompt || "").trim());
       }
     });
   }

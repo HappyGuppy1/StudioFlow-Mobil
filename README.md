@@ -6,8 +6,8 @@ dışa aktarma doğrudan telefonda yapılır.
 
 **Aç:** https://happyguppy1.github.io/StudioFlow-Mobil/
 
-> **Sürüm 0.2 (erken sürüm).** Masaüstü StudioFlow'un ana akışı telefonda: senaryoyu yaz ya da Gemini'ye
-> yazdır, sahnelere böl, sesi ve görselleri üret, videoyu oluştur. Projeler telefonda saklanır; yarıda
+> **Sürüm 0.3 (erken sürüm).** Masaüstü StudioFlow'un ana akışı telefonda: senaryoyu yaz ya da Gemini'ye
+> yazdır, sahnelere böl, sesi ve görselleri üret, istersen görselleri LTX ile hareketlendir, videoyu oluştur. Projeler telefonda saklanır; yarıda
 > kalan üretim kaldığı yerden sürer.
 
 ## Telefona kurulum
@@ -22,13 +22,16 @@ kendiliğinden gelir.
 ## Kullanım
 
 1. **Ayarlar:** Gemini API anahtarını gir ([Google AI Studio](https://aistudio.google.com/apikey)'dan
-   ücretsiz alınır). Görsel üretmek istersen Cloudflare bilgilerini de gir.
+   ücretsiz alınır). Görsel üretmek istersen Cloudflare bilgilerini, görselleri hareketlendirmek istersen
+   Hugging Face token'ını da gir.
 2. **Projeler › Yeni proje › Senaryo:** anlatım metnini yaz ya da yapıştır; istersen konuyu yazıp
    *Senaryoyu Gemini yazsın*'a bas. Dili, sesi ve biçimi (dikey / yatay) seç, *Sahnelere böl*'e bas.
 3. **Sahneler:** *Eksikleri üret* sırayla görsel tariflerini (prompt), seslendirmeyi ve görselleri üretir.
    Her sahnenin anlatımını ve tarifini düzeltebilir, görselini yeniden üretebilir ya da galeriden
    seçebilirsin. Metni değişen sahnenin yalnızca kendi ses parçası yeniden okunur.
-4. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile Fotoğraflar'a
+4. **Hareketli klipler (isteğe bağlı):** Senaryo sekmesinde *Görselleri hareketlendir*'i aç. *Eksikleri
+   üret* her sahnenin görselini Hugging Face'teki LTX-2.3 ile birkaç saniyelik klibe çevirir.
+5. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile Fotoğraflar'a
    ya da Dosyalar'a kaydet.
 
 Anahtarlar yalnızca telefonda (tarayıcı deposunda) saklanır. Bu depoya ya da herhangi bir sunucuya
@@ -57,8 +60,9 @@ Aracı kurmak istemezsen görselleri galeriden ekleyebilirsin; seslendirme ve vi
   telefonun belleğini aşabilir.
 - **Zamanlama yaklaşıktır.** Seslendirme birkaç sahne tek istekte okunur (kota için); sahne geçişleri ve
   altyazı süreleri metin uzunluğuna göre paylaştırılır, kelime kelime hizalanmaz.
-- **Görseller durağandır.** Sahneler yavaş yakınlaşma ve erime geçişiyle canlandırılır; masaüstündeki
-  görselden video üretimi (LTX) henüz yok.
+- **Klipler kotalıdır.** Hareketlendirme Hugging Face'in ücretsiz ZeroGPU kotasını kullanır (klip başına
+  yaklaşık 40 sn); ücretsiz hesapta günde birkaç klip çıkar. Kota dolunca kalan sahneler yavaş yakınlaşan
+  durağan görselle gösterilir. Kendi LTX Space kopyan varsa adını ve erişim anahtarını Ayarlar'a yazabilirsin.
 - **Projeler tarayıcı deposundadır.** Uygulamayı ana ekrana kur; Safari'de site verilerini silersen
   projeler de silinir.
 - **Eski iPhone'lar.** iOS 26 öncesinde hızlı ses kodlayıcısı yoktur; uygulama kendiliğinden gerçek
@@ -85,6 +89,7 @@ ile klasörü sun ve `http://127.0.0.1:8765/` adresini aç.
 | `js/metin.js` | Gemini ile senaryo ve görsel prompt'u |
 | `js/gemini.js` | Gemini TTS ile seslendirme |
 | `js/cloudflare.js` | Cloudflare Workers AI ile görsel |
+| `js/video_ltx.js` | Hugging Face LTX Space'i ile görselden klip |
 | `js/disa_aktar.js` | Video dışa aktarma (WebCodecs; yedek: MediaRecorder) |
 | `js/cihaz.js` | Cihaz raporu |
 | `sw.js` | Çevrimdışı açılış |
