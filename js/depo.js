@@ -57,3 +57,4 @@ export function kaliciIste() {
 export const gorselAnahtari = (projeId, sahneId) => `${projeId}:gorsel:${sahneId}`;
 export const sesAnahtari = (projeId, parca) => `${projeId}:ses:${parca}`;
 export const videoAnahtari = (projeId, sahneId) => `${projeId}:video:${sahneId}`;
+export const muzikAnahtari = (projeId) => `${projeId}:muzik`;

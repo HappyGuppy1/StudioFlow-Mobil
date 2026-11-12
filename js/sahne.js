@@ -167,3 +167,32 @@ export function uretimBoyutu(proje) {
   const [en, boy] = (proje.boyut || "720x1280").split("x").map(Number);
   return en < boy ? { en: 768, boy: 1344 } : { en: 1344, boy: 768 };
 }
+
+/**
+ * Dublaj dili için proje görünümü: sahne metinleri o dilin çevirileri, ses süreleri o dilin süreleridir.
+ * `sesPlani` ve `zamanlama` bu görünümle çağrılınca o dilin planını ve zamanlamasını verir.
+ * Süreler nesnesi paylaşılır (kopyalanmaz): görünüme yazılan süre projeye de yazılmış olur.
+ */
+export function dilGorunumu(proje, kod) {
+  const dublaj = proje.diller?.[kod];
+  if (!dublaj) return proje;
+  return { ...proje, dil: kod, sesSureleri: dublaj.sesSureleri,
+           sahneler: proje.sahneler.map((s) => ({ ...s, metin: dublaj.metinler[s.id] || "" })) };
+}
+
+/** Projenin bütün dillerindeki (asıl + dublajlar) geçerli ses parçası anahtarları. */
+export function tumSesAnahtarlari(proje) {
+  const anahtarlar = new Set(sesPlani(proje).map((p) => p.anahtar));
+  for (const kod of Object.keys(proje.diller || {})) for (const p of sesPlani(dilGorunumu(proje, kod))) anahtarlar.add(p.anahtar);
+  return anahtarlar;
+}
+
+/** Altyazı bloklarından SRT dosyası metni üretir. */
+export function srtMetni(bloklar) {
+  const zaman = (t) => {
+    const ms = Math.max(0, Math.round(t * 1000));
+    const iki = (n) => String(n).padStart(2, "0");
+    return `${iki(Math.floor(ms / 3600000))}:${iki(Math.floor(ms / 60000) % 60)}:${iki(Math.floor(ms / 1000) % 60)},${String(ms % 1000).padStart(3, "0")}`;
+  };
+  return bloklar.map((b, i) => `${i + 1}\n${zaman(b.bas)} --> ${zaman(b.bit)}\n${b.metin}\n`).join("\n");
+}

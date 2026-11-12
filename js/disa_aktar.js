@@ -134,15 +134,16 @@ function satirlaraBol(ctx, metin, azami) {
   return satirlar;
 }
 
-function altyaziCiz(ctx, metin, en, boy) {
-  const punto = Math.round(Math.min(en, boy) * 0.062);
+function altyaziCiz(ctx, metin, en, boy, stil = {}) {
+  const punto = Math.round(Math.min(en, boy) * 0.062 * (stil.olcek || 1));
   ctx.font = `700 ${punto}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
   const satirlar = satirlaraBol(ctx, metin, en * 0.86);
   const aralik = punto * 1.25;
-  const y0 = boy * (en < boy ? 0.8 : 0.86) - (satirlar.length - 1) * aralik / 2;
+  const dikey = stil.konum === "ust" ? 0.14 : stil.konum === "orta" ? 0.5 : (en < boy ? 0.8 : 0.86);
+  const y0 = boy * dikey - (satirlar.length - 1) * aralik / 2;
   ctx.lineWidth = punto * 0.24;
   ctx.strokeStyle = "rgba(0, 0, 0, .92)";
   ctx.fillStyle = "#fff";
@@ -156,7 +157,7 @@ function altyaziCiz(ctx, metin, en, boy) {
  * Kare çizici. Her dilimin görseli tuvali kaplar, dilim boyunca yavaşça yakınlaşır ya da
  * uzaklaşır, bir sonraki dilime eriyerek geçer; varsa o anın altyazısı üste yazılır.
  */
-function kareCizici({ dilimler, altyazilar, en, boy, kaynak }) {
+function kareCizici({ dilimler, altyazilar, altyaziStili, en, boy, kaynak }) {
   let di = 0, ai = 0, oynayan = null;
   const gecisSuresi = (d) => Math.min(0.5, (d.bit - d.bas) / 4);
   const dilimCiz = (ctx, k, t, alfa) => {
@@ -222,7 +223,7 @@ function kareCizici({ dilimler, altyazilar, en, boy, kaynak }) {
       if (altyazilar.length) {
         ai = sirada(altyazilar, t, ai);
         const a = altyazilar[ai];
-        if (t >= a.bas && t < a.bit) altyaziCiz(ctx, a.metin, en, boy);
+        if (t >= a.bas && t < a.bit) altyaziCiz(ctx, a.metin, en, boy, altyaziStili);
       }
     },
   };
@@ -389,7 +390,7 @@ async function gercekZamanliAktar({ cizici, ses, en, boy, fps, sure, ilerleme, i
  *   gorselAl  : `async (no) => tuval | ImageBitmap` (ihtiyaç oldukça çağrılır)
  *   videoAl   : `async (no) => HTMLVideoElement` (yüklenmiş, sessiz; `birak()` varsa atılırken çağrılır)
  *   ses       : `{ pcm: Float32Array, hiz }` ya da `null`
- *   altyazilar: `[{ bas, bit, metin }]` (isteğe bağlı)
+ *   altyazilar: `[{ bas, bit, metin }]` (isteğe bağlı); altyaziStili: `{ olcek, konum: "alt" | "orta" | "ust" }`
  *   yontem    : "oto" | "hizli" | "gercek"
  * Döner: `{ blob, uzanti, yontem, gecen, sure }` (süreler saniye).
  */

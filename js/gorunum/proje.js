@@ -1,5 +1,5 @@
 // Proje ekranı (düzenleyici): yatay ekranda, masaüstü StudioFlow'daki düzenle.
-//   üst çubuk · [şerit | panel | önizleme | sahne paneli] · alt zaman çizelgesi
+//   üst çubuk · [şerit | panel | önizleme | sahne paneli] · alt zaman çizelgesi (sahne, altyazı, dil, müzik izleri)
 import { h, secenekler, durumYaz, geciktir, ekranAcik, sureYaz } from "../dom.js";
 import * as depo from "../depo.js";
 import { ayar, ayarGuncelle, ltxSpaceleri } from "../ayar.js";
@@ -9,21 +9,27 @@ import * as gemini from "../gemini.js";
 import * as cloudflare from "../cloudflare.js";
 import * as metinAI from "../metin.js";
 import { sahnelereBol, sesPlani, zamanlama, altyaziBloklari, gorselPromptu, uretimBoyutu, yeniSahne,
-         SES_PARCA_SINIRI } from "../sahne.js";
+         dilGorunumu, tumSesAnahtarlari, srtMetni, SES_PARCA_SINIRI } from "../sahne.js";
 import { depoyaHazirla, videoTuvali, kayittanBlob, ltxKaresi, klipOgesi } from "../gorsel.js";
-import { sesBaglami, wavBlob } from "../ses.js";
+import { sesBaglami, wavBlob, dosyadanSes } from "../ses.js";
+import { karistir } from "../karisim.js";
 import { disaAktar } from "../disa_aktar.js";
 
 const BOYUTLAR = [["720x1280", "Dikey 720 × 1280"], ["1080x1920", "Dikey 1080 × 1920"],
                   ["1280x720", "Yatay 1280 × 720"], ["1920x1080", "Yatay 1920 × 1080"]];
 const SURELER = [30, 45, 60, 90, 120, 180, 300];
-const RAY = [["sahneler", "🎞", "Sahneler"], ["metin", "📝", "Metin"], ["ayarlar", "⚙", "Ayarlar"], ["video", "🎬", "Video"]];
+const RAY = [["sahneler", "🎞", "Sahneler"], ["metin", "📝", "Metin"], ["ayarlar", "⚙", "Ayarlar"], ["altyazi", "💬", "Altyazı"],
+             ["dublaj", "🌐", "Dublaj"], ["muzik", "🎵", "Müzik"], ["video", "🎬", "Video"]];
+const ALTYAZI_OLCEK = { kucuk: 0.8, orta: 1, buyuk: 1.25 };
 const bekle = (ms) => new Promise((coz) => setTimeout(coz, ms));
 
 export async function projeGorunumu(kok, id, kabuk) {
   const P = await depo.projeler.al(id);
   if (!P) { location.replace("#/"); return null; }
   kabuk.baslik(P.ad, true);
+  P.diller ||= {};                   // dublajlar: { kod: { metinler: { sahneId: çeviri }, sesSureleri: {} } }
+  P.altyaziBoyut ||= "orta";
+  P.altyaziKonum ||= "alt";
 
   const kaydet = geciktir(() => { P.guncelleme = Date.now(); depo.projeler.yaz(P).catch(() => {}); }, 400);
   const gizlenince = () => { if (document.hidden) kaydet.simdi(); };
@@ -36,6 +42,12 @@ export async function projeGorunumu(kok, id, kabuk) {
   let panel = P.sahneler.length ? "sahneler" : "metin";
   let secili = 0;
   let sonVideo = null;
+  let muzikPcm = null;               // çözülmüş müzik: { pcm, hiz } (bellekte)
+
+  // Etkin dil: önizleme, zaman çizelgesi, altyazı ve dışa aktarma bu dile göre çalışır ("" = asıl dil).
+  let etkin = P.diller[P.etkinDil] ? P.etkinDil : "";
+  const G = () => (etkin ? dilGorunumu(P, etkin) : P);
+  const dilAdi = (kod) => (kod || P.dil).toUpperCase();
 
   // ── İskelet ─────────────────────────────────────────────────────────────────
   const isDurumu = h("p", { class: "durum", role: "status" });
@@ -120,6 +132,7 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   async function calistir(is_) {
     if (is.calisiyor) return;
+    oynatmayiDurdur();
     is.calisiyor = true;
     is.iptal = false;
     isAlani.hidden = false;
@@ -170,28 +183,52 @@ export async function projeGorunumu(kok, id, kabuk) {
     return yazilan;
   }
 
-  async function sesAdimi() {
-    const plan = sesPlani(P);
-    const eksik = plan.filter((p) => !(P.sesSureleri[p.anahtar] > 0));
+  /** Verilen dilin (varsayılan: asıl dil) eksik ses parçalarını üretir. */
+  async function sesAdimi(kod = "") {
+    const gorunum = kod ? dilGorunumu(P, kod) : P;
+    const plan = sesPlani(gorunum);
+    const eksik = plan.filter((p) => !(gorunum.sesSureleri[p.anahtar] > 0));
+    const onek = kod ? `${dilAdi(kod)} dublajı` : "Seslendirme";
     let biten = 0;
     for (const parca of eksik) {
       durduysa();
-      adim(`Seslendirme: parça ${biten + 1} / ${eksik.length}`, biten / eksik.length);
+      adim(`${onek}: parça ${biten + 1} / ${eksik.length}`, biten / eksik.length);
       const ses = await hesapla("gemini")((hesap) => gemini.seslendirDayanikli({
-        anahtar: hesap.gemini_key, model: P.model, ses: P.ses, dil: P.dil, stil: P.stil, metin: parca.metin }));
+        anahtar: hesap.gemini_key, model: P.model, ses: P.ses, dil: gorunum.dil, stil: P.stil, metin: parca.metin }));
       const ornek = new Int16Array(ses.pcm.length);
       for (let i = 0; i < ornek.length; i++) ornek[i] = Math.max(-32768, Math.min(32767, Math.round(ses.pcm[i] * 32767)));
       await depo.dosyalar.yaz(depo.sesAnahtari(P.id, parca.anahtar), { veri: ornek.buffer, hiz: ses.hiz });
-      P.sesSureleri[parca.anahtar] = ses.pcm.length / ses.hiz;
+      gorunum.sesSureleri[parca.anahtar] = ses.pcm.length / ses.hiz;
       await depo.projeler.yaz(P);
       biten++;
     }
-    // Metni değişen parçaların eski sesleri silinir.
-    const gecerli = new Set(plan.map((p) => p.anahtar));
-    for (const anahtar of Object.keys(P.sesSureleri)) if (!gecerli.has(anahtar)) delete P.sesSureleri[anahtar];
+    // Metni değişen parçaların eski sesleri silinir (öbür dillerin sesleri korunur).
+    const buDil = new Set(plan.map((p) => p.anahtar));
+    for (const anahtar of Object.keys(gorunum.sesSureleri)) if (!buDil.has(anahtar)) delete gorunum.sesSureleri[anahtar];
+    const gecerli = tumSesAnahtarlari(P);
     for (const dosya of await depo.dosyalar.anahtarlar(`${P.id}:ses:`)) {
       if (!gecerli.has(dosya.split(":").pop())) await depo.dosyalar.sil(dosya);
     }
+    return biten;
+  }
+
+  /** Dublaj dilinde çevirisi olmayan sahneleri çevirir. */
+  async function ceviriAdimi(kod) {
+    const dublaj = P.diller[kod];
+    const eksik = P.sahneler.map((s, i) => ({ sahne: s, index: i + 1 }))
+      .filter((k) => k.sahne.metin.trim() && !(dublaj.metinler[k.sahne.id] || "").trim());
+    if (!eksik.length) return 0;
+    let biten = 0;
+    adim(`${dilAdi(kod)} çevirisi: 0 / ${eksik.length}`, 0);
+    await metinAI.cevir({
+      anahtar: hesapla("gemini"), kaynakDil: P.dil, hedefDil: kod,
+      sahneler: eksik.map((k) => ({ index: k.index, metin: k.sahne.metin })), iptal: () => is.iptal,
+      bildir: (kayit, ceviri) => {
+        dublaj.metinler[P.sahneler[kayit.index - 1].id] = ceviri;
+        kaydet();
+        adim(`${dilAdi(kod)} çevirisi: ${++biten} / ${eksik.length}`, biten / eksik.length);
+      },
+    });
     return biten;
   }
 
@@ -287,6 +324,11 @@ export async function projeGorunumu(kok, id, kabuk) {
       if (klipsiz.length && havuz.hesapVar("huggingface")) ozet.push(`${await klipAdimi(klipsiz)} klip`);
       else if (klipsiz.length) not += " Klipler için Hugging Face hesabı yok: API sayfasından ekle.";
     }
+    for (const kod of Object.keys(P.diller)) {          // dublajların eksik çevirisi ve sesi
+      durduysa();
+      const n = (await ceviriAdimi(kod)) + (await sesAdimi(kod));
+      if (n) ozet.push(`${dilAdi(kod)} dublajı`);
+    }
     return (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : "Her şey zaten hazır.") + not;
   });
 
@@ -316,6 +358,47 @@ export async function projeGorunumu(kok, id, kabuk) {
     return adres;
   }
 
+  // ── Ses: anlatım (etkin dil) + müzik ────────────────────────────────────────
+  async function sesiTopla(gorunum = G()) {
+    const plan = sesPlani(gorunum);
+    const parcalar = [];
+    let hiz = null;
+    for (const p of plan) {
+      const kayit = await depo.dosyalar.al(depo.sesAnahtari(P.id, p.anahtar));
+      if (!kayit) throw new Error("Ses dosyası eksik: “Eksikleri üret”e bas.");
+      if (hiz !== null && kayit.hiz !== hiz) throw new Error("Ses parçalarının örnekleme hızları farklı; sesi yeniden üret.");
+      hiz = kayit.hiz;
+      parcalar.push(new Int16Array(kayit.veri));
+    }
+    if (!parcalar.length) return null;
+    const pcm = new Float32Array(parcalar.reduce((t, p) => t + p.length, 0));
+    let konum = 0;
+    for (const p of parcalar) {
+      for (let i = 0; i < p.length; i++) pcm[konum + i] = p[i] / 32768;
+      konum += p.length;
+    }
+    return { pcm, hiz };
+  }
+
+  async function muzigiCoz() {
+    if (!P.muzik) return null;
+    if (!muzikPcm) {
+      const kayit = await depo.dosyalar.al(depo.muzikAnahtari(P.id));
+      if (!kayit) return null;
+      muzikPcm = await dosyadanSes(kayit.veri.slice(0));
+    }
+    return muzikPcm;
+  }
+
+  /** Etkin dilin son sesi: anlatım (varsa) ve müzik (varsa) karışımı. Hiçbiri yoksa `null`. */
+  async function sonSes(z = zamanlama(G())) {
+    const anlatim = z.sesDurumu === "tam" ? await sesiTopla() : null;
+    const muzik = await muzigiCoz().catch(() => null);
+    if (!muzik) return anlatim;
+    return karistir({ anlatim, muzik, sure: z.toplam, seviye: P.muzik.seviye, ducking: P.muzik.ducking, karartma: P.muzik.karartma });
+  }
+  const sesImzasi = () => [etkin, sesPlani(G()).map((p) => p.anahtar).join("|"), JSON.stringify(P.muzik || null)].join("#");
+
   // ── Önizleme ve oynatma ─────────────────────────────────────────────────────
   const altyaziKutusu = h("div", { class: "ed-altyazi", hidden: true });
   let tuvalSirasi = 0;
@@ -323,6 +406,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     const benim = ++tuvalSirasi;
     const [en, boy] = P.boyut.split("x").map(Number);
     tuval.style.aspectRatio = `${en} / ${boy}`;
+    altyaziKutusu.dataset.konum = P.altyaziKonum;
     const sahne = P.sahneler[secili];
     if (!sahne) return tuval.replaceChildren(h("p", { class: "ed-bos" }, "Sahne yok"));
     let icerik;
@@ -343,7 +427,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     if (benim !== tuvalSirasi) return;          // bu arada başka sahne seçildi
     if (icerik?.tagName === "VIDEO" && oynatma.calisiyor) icerik.play().catch(() => {});      // klip yalnızca oynatırken oynar
     tuval.replaceChildren(icerik || h("p", { class: "ed-bos" }, "Görsel yok"), altyaziKutusu,
-      h("span", { class: "ed-etiket" }, `Sahne ${secili + 1}`));
+      h("span", { class: "ed-etiket" }, `Sahne ${secili + 1}${etkin ? " · " + dilAdi(etkin) : ""}`));
   }
 
   const oynatma = { calisiyor: false, ses: null, sesAnahtari: "", kare: 0 };
@@ -359,29 +443,29 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   async function oynat() {
     if (oynatma.calisiyor) return oynatmayiDurdur();
-    const z = zamanlama(P);
+    const gorunum = G();
+    const z = zamanlama(gorunum);
     if (!P.sahneler.length || !(z.toplam > 0)) return;
     let bas = z.sahneler.get(P.sahneler[secili].id).bas;
     if (bas >= z.toplam - 0.05) bas = 0;
     let saat;
-    if (z.sesDurumu === "tam") {
-      const anahtar = sesPlani(P).map((p) => p.anahtar).join("|");
-      if (oynatma.sesAnahtari !== anahtar) {
-        const ses = await sesiTopla().catch(() => null);
-        if (ses) {
-          const adres = URL.createObjectURL(wavBlob(ses.pcm, ses.hiz));
-          adresler.add(adres);
-          oynatma.ses = new Audio(adres);
-          oynatma.sesAnahtari = anahtar;
-        }
+    const imza = sesImzasi();
+    if (oynatma.sesAnahtari !== imza) {
+      const ses = await sonSes(z).catch(() => null);
+      oynatma.ses = null;
+      if (ses) {
+        const adres = URL.createObjectURL(wavBlob(ses.pcm, ses.hiz));
+        adresler.add(adres);
+        oynatma.ses = new Audio(adres);
       }
-      if (oynatma.sesAnahtari === anahtar) {
-        oynatma.ses.currentTime = bas;
-        try {
-          await oynatma.ses.play();
-          saat = () => oynatma.ses.currentTime;
-        } catch { /* tarayıcı sesi başlatmadı: aşağıda sessiz saatle oynatılır */ }
-      }
+      oynatma.sesAnahtari = imza;
+    }
+    if (oynatma.ses) {
+      oynatma.ses.currentTime = bas;
+      try {
+        await oynatma.ses.play();
+        saat = () => oynatma.ses.currentTime;
+      } catch { /* tarayıcı sesi başlatmadı: aşağıda sessiz saatle oynatılır */ }
     }
     const sesli = !!saat;
     if (!saat) {
@@ -395,12 +479,12 @@ export async function projeGorunumu(kok, id, kabuk) {
       if (!oynatma.calisiyor) return;
       const t = saat();
       if (t >= z.toplam || (sesli && oynatma.ses.ended)) return oynatmayiDurdur();
-      const sira = P.sahneler.findIndex((s) => { const a = z.sahneler.get(s.id); return t >= a.bas && t < a.bit; });
+      const sira = gorunum.sahneler.findIndex((s) => { const a = z.sahneler.get(s.id); return t >= a.bas && t < a.bit; });
       if (sira >= 0 && sira !== secili) sec(sira, true);
       zamanEtiketi.textContent = `${sureYaz(t)} / ${sureYaz(z.toplam)}`;
       if (P.altyazi && sira >= 0) {
-        const a = z.sahneler.get(P.sahneler[sira].id);
-        const blok = altyaziBloklari(P.sahneler[sira].metin, a.bas, a.bit).find((b) => t >= b.bas && t < b.bit);
+        const a = z.sahneler.get(gorunum.sahneler[sira].id);
+        const blok = altyaziBloklari(gorunum.sahneler[sira].metin, a.bas, a.bit).find((b) => t >= b.bas && t < b.bit);
         altyaziKutusu.textContent = blok?.metin || "";
         altyaziKutusu.hidden = !blok;
       }
@@ -415,16 +499,24 @@ export async function projeGorunumu(kok, id, kabuk) {
     secili = Math.max(0, Math.min(P.sahneler.length - 1, sira));
     if (!oynatirken) oynatmayiDurdur();
     for (const oge of editor.querySelectorAll("[data-sira]")) oge.classList.toggle("secili", Number(oge.dataset.sira) === secili);
-    zamanCizelgesi.querySelector(".secili")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    zamanCizelgesi.querySelector(".ed-zc-oge.secili")?.scrollIntoView({ block: "nearest", inline: "nearest" });
     cizTuval();
     cizDenetci();
     if (!oynatirken) zamaniYaz();
   }
 
   function zamaniYaz() {
-    const z = zamanlama(P);
+    const z = zamanlama(G());
     const a = P.sahneler[secili] && z.sahneler.get(P.sahneler[secili].id);
     zamanEtiketi.textContent = `${sureYaz(a?.bas || 0)} / ${sureYaz(z.toplam)}`;
+  }
+
+  function dilSec(kod) {
+    oynatmayiDurdur();
+    etkin = P.diller[kod] ? kod : "";
+    P.etkinDil = etkin;
+    kaydet();
+    ciz();
   }
 
   // ── Paneller ────────────────────────────────────────────────────────────────
@@ -432,9 +524,9 @@ export async function projeGorunumu(kok, id, kabuk) {
     const oge = h(ogeTuru, { ...ozellik, value: P[ad] ?? "", oninput: () => { P[ad] = oge.value; kaydet(); degisti?.(); } }, cocuklar);
     return h("label", null, etiket, oge);
   }
-  const onay = (etiket, ad, degisti) => {
-    const kutu = h("input", { type: "checkbox", onchange: () => { P[ad] = kutu.checked; kaydet(); degisti?.(); } });
-    kutu.checked = !!P[ad];
+  const onay = (etiket, deger, degisti) => {
+    const kutu = h("input", { type: "checkbox", onchange: () => degisti(kutu.checked) });
+    kutu.checked = !!deger;
     return h("label", { class: "onay" }, kutu, h("span", null, etiket));
   };
   const tercih = (ad) => () => ayarGuncelle({ [ad]: P[ad] });
@@ -483,11 +575,13 @@ export async function projeGorunumu(kok, id, kabuk) {
       sayac,
       h("button", { class: "dugme birincil kucuk is-dugme", disabled: is.calisiyor, onclick: async () => {
         if (!P.senaryo.trim()) return durumYaz(durum, "Önce senaryoyu yaz.", "hata");
-        if (P.sahneler.length && !confirm(`Mevcut ${P.sahneler.length} sahne, görselleri ve sesi silinip senaryo yeniden bölünsün mü?`)) return;
+        if (P.sahneler.length && !confirm(`Mevcut ${P.sahneler.length} sahne, görselleri, sesi ve dublajları silinip senaryo yeniden bölünsün mü?`)) return;
         oynatmayiDurdur();
-        await depo.dosyalar.onekSil(`${P.id}:`);
+        for (const tur of ["gorsel", "video", "ses"]) await depo.dosyalar.onekSil(`${P.id}:${tur}:`);      // müzik korunur
         P.sahneler = sahnelereBol(P.senaryo);
         P.sesSureleri = {};
+        P.diller = {};
+        etkin = P.etkinDil = "";
         kaydet(); kaydet.simdi();
         panel = "sahneler";
         secili = 0;
@@ -507,10 +601,133 @@ export async function projeGorunumu(kok, id, kabuk) {
       yaziAlani("Anlatım tarzı", P.stil, { degisti: (v) => { P.stil = v; kaydet(); } }),
       alan("Görsel modeli", "gorselModel", "select", { degisti: tercih("gorselModel") }, secenekler(cloudflare.MODELLER.map((m) => [m.kimlik, m.ad]), P.gorselModel)),
       yaziAlani("Görsel stili (her tarife eklenir)", P.gorselStili, { degisti: (v) => { P.gorselStili = v; kaydet(); } }),
-      onay("Görselleri hareketlendir (LTX)", "hareketli", ciz),
+      onay("Görselleri hareketlendir (LTX)", P.hareketli, (v) => { P.hareketli = v; kaydet(); ciz(); }),
       h("p", { class: "soluk" }, "Her görsel birkaç saniyelik klibe çevrilir; klip başına yaklaşık 40 sn sürer ve Hugging Face kotasından düşer."),
-      onay("Altyazıyı videoya yaz", "altyazi"),
-      h("p", { class: "soluk" }, "Ses, model ya da anlatım tarzı değişirse seslendirme yeniden üretilir."),
+      h("p", { class: "soluk" }, "Ses, model ya da anlatım tarzı değişirse seslendirme (dublajlar dahil) yeniden üretilir."),
+    ];
+  }
+
+  // Altyazı: sahne metni kısa bloklara bölünür; süreler metin uzunluğuna göre paylaştırılır (yaklaşık).
+  function tumAltyazilar() {
+    const gorunum = G(), z = zamanlama(gorunum);
+    return gorunum.sahneler.flatMap((s) => {
+      const a = z.sahneler.get(s.id);
+      return s.metin.trim() && a.bit > a.bas ? altyaziBloklari(s.metin, a.bas, a.bit) : [];
+    });
+  }
+
+  function altyaziPaneli() {
+    const bloklar = P.sahneler.length ? tumAltyazilar() : [];
+    return [
+      h("h2", null, "Altyazı"),
+      onay("Altyazıyı videoya yaz", P.altyazi, (v) => { P.altyazi = v; kaydet(); cizZaman(); }),
+      h("div", { class: "izgara-2" },
+        alan("Boyut", "altyaziBoyut", "select", {}, secenekler([["kucuk", "Küçük"], ["orta", "Orta"], ["buyuk", "Büyük"]], P.altyaziBoyut)),
+        alan("Konum", "altyaziKonum", "select", { degisti: cizTuval }, secenekler([["alt", "Altta"], ["orta", "Ortada"], ["ust", "Üstte"]], P.altyaziKonum))),
+      h("p", { class: "soluk" }, bloklar.length
+        ? `${bloklar.length} altyazı bloğu · dil: ${dilAdi(etkin)}. Süreler metin uzunluğuna göre paylaştırılır (yaklaşık).`
+        : "Sahneler oluşunca altyazı blokları burada sayılır."),
+      h("button", { class: "dugme kucuk", disabled: !bloklar.length, onclick: () => {
+        const adres = URL.createObjectURL(new Blob([srtMetni(tumAltyazilar())], { type: "application/x-subrip" }));
+        adresler.add(adres);
+        h("a", { href: adres, download: `${dosyaAdi()}${etkin ? "-" + etkin : ""}.srt` }).click();
+      } }, "SRT dosyasını indir"),
+    ];
+  }
+
+  function dublajPaneli() {
+    const eklenebilir = Object.keys(gemini.DILLER).filter((k) => k !== P.dil && !P.diller[k]);
+    const secim = h("select", null, secenekler(eklenebilir.map((k) => [k, `${k.toUpperCase()} · ${gemini.DILLER[k]}`]), eklenebilir[0]));
+    const satir = (kod) => {
+      const z = zamanlama(kod ? dilGorunumu(P, kod) : P);
+      const durum = z.sesDurumu === "tam" ? `ses ✓ · ${sureYaz(z.toplam)}` : z.sesDurumu === "eksik" ? "ses eksik" : "ses yok";
+      return h("div", { class: "ed-dil-satir" + (etkin === kod ? " secili" : "") },
+        h("button", { class: "ed-dil-ad", onclick: () => dilSec(kod) }, h("strong", null, dilAdi(kod)), h("small", null, kod ? durum : `asıl · ${durum}`)),
+        kod ? h("button", { class: "ed-ikon", "aria-label": `${dilAdi(kod)} dublajını sil`, onclick: async () => {
+          if (!confirm(`${dilAdi(kod)} dublajı (çeviri ve ses) silinsin mi?`)) return;
+          delete P.diller[kod];
+          if (etkin === kod) etkin = P.etkinDil = "";
+          const gecerli = tumSesAnahtarlari(P);
+          for (const dosya of await depo.dosyalar.anahtarlar(`${P.id}:ses:`)) if (!gecerli.has(dosya.split(":").pop())) await depo.dosyalar.sil(dosya);
+          kaydet();
+          ciz();
+        } }, "🗑") : null);
+    };
+    return [
+      h("h2", null, "Dublaj"),
+      h("p", { class: "soluk" }, "Anlatım başka bir dile çevrilir ve o dilde seslendirilir; görseller ortaktır. Bir dile dokununca önizleme ve dışa aktarma o dile geçer."),
+      satir(""), Object.keys(P.diller).map(satir),
+      eklenebilir.length ? h("label", null, "Dil ekle", secim) : null,
+      eklenebilir.length ? h("button", { class: "dugme birincil kucuk is-dugme", disabled: is.calisiyor || !P.sahneler.length, onclick: () => {
+        const kod = secim.value;
+        calistir(async () => {
+          if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: API sayfasından kasaya bağlanıp ekle.");
+          P.diller[kod] ||= { metinler: {}, sesSureleri: {} };
+          const cevrilen = await ceviriAdimi(kod);
+          durduysa();
+          const ses = await sesAdimi(kod);
+          etkin = P.etkinDil = kod;
+          return `${dilAdi(kod)} dublajı hazır: ${cevrilen} sahne çevrildi, ${ses} ses parçası üretildi.`;
+        });
+      } }, "Çevir ve seslendir") : null,
+      h("p", { class: "soluk" }, "Her dil için çeviri (12 sahnede 1 istek) ve seslendirme Gemini kotasından düşer."),
+    ];
+  }
+
+  function muzikPaneli() {
+    const durum = h("p", { class: "durum", role: "status" });
+    const dosya = h("input", { type: "file", accept: "audio/*", hidden: true, onchange: async () => {
+      const secilen = dosya.files[0];
+      dosya.value = "";
+      if (!secilen) return;
+      durumYaz(durum, "Müzik okunuyor…");
+      try {
+        const veri = await secilen.arrayBuffer();
+        sesBaglami();
+        const cozulen = await dosyadanSes(veri.slice(0));        // çözülebildiğini doğrula
+        await depo.dosyalar.yaz(depo.muzikAnahtari(P.id), { veri, tur: secilen.type });
+        muzikPcm = cozulen;
+        P.muzik = { ad: secilen.name, sure: cozulen.pcm.length / cozulen.hiz, seviye: P.muzik?.seviye ?? 20,
+                    ducking: P.muzik?.ducking ?? true, karartma: P.muzik?.karartma ?? 1.5 };
+        oynatmayiDurdur();
+        kaydet();
+        ciz();
+      } catch {
+        durumYaz(durum, "Bu ses dosyası okunamadı.", "hata");
+      }
+    } });
+    if (!P.muzik) {
+      return [h("h2", null, "Müzik"),
+              h("p", { class: "soluk" }, "Telefonundan bir müzik dosyası seç. Müzik anlatımın altına serilir; videodan kısaysa baştan tekrarlanır."),
+              h("label", { class: "dugme birincil kucuk dosya" }, "Müzik dosyası seç", dosya), durum];
+    }
+    const seviyeYazi = h("span", null, `Düzey: %${P.muzik.seviye}`);
+    const seviye = h("input", { type: "range", min: "0", max: "100", step: "1", value: String(P.muzik.seviye), oninput: () => {
+      P.muzik.seviye = Number(seviye.value);
+      seviyeYazi.textContent = `Düzey: %${P.muzik.seviye}`;
+      kaydet();
+    }, onchange: cizZaman });
+    return [
+      h("h2", null, "Müzik"),
+      h("p", { class: "ed-muzik-ad" }, `🎵 ${P.muzik.ad} · ${sureYaz(P.muzik.sure)}`),
+      h("label", null, seviyeYazi, seviye),
+      onay("Konuşurken müziği kıs", P.muzik.ducking, (v) => { P.muzik.ducking = v; kaydet(); }),
+      h("label", null, "Baş ve son karartma",
+        h("select", { onchange: (o) => { P.muzik.karartma = Number(o.target.value); kaydet(); } },
+          secenekler([["0", "Yok"], ["1.5", "1,5 sn"], ["3", "3 sn"], ["5", "5 sn"]], String(P.muzik.karartma)))),
+      h("div", { class: "satir" },
+        h("label", { class: "dugme kucuk dosya" }, "Değiştir", dosya),
+        h("button", { class: "dugme kucuk", onclick: async () => {
+          if (!confirm("Müzik projeden kaldırılsın mı?")) return;
+          await depo.dosyalar.sil(depo.muzikAnahtari(P.id));
+          P.muzik = null;
+          muzikPcm = null;
+          oynatmayiDurdur();
+          kaydet();
+          ciz();
+        } }, "Kaldır")),
+      h("p", { class: "soluk" }, "Değişikliği duymak için önizlemede ▶ bas."),
+      durum,
     ];
   }
 
@@ -519,7 +736,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     const sahne = P.sahneler[secili];
     if (!sahne) return denetci.replaceChildren(h("h2", null, "Sahne"), h("p", { class: "soluk" }, "Sahne seçilmedi."));
     const no = secili + 1;
-    const z = zamanlama(P);
+    const z = zamanlama(G());
     const a = z.sahneler.get(sahne.id);
     const dosya = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async () => {
       const secilen = dosya.files[0];
@@ -527,7 +744,8 @@ export async function projeGorunumu(kok, id, kabuk) {
       if (!secilen) return;
       try { await gorselKaydet(sahne, await depoyaHazirla(secilen)); cizZaman(); cizPanel(); } catch { alert("Bu görsel okunamadı."); }
     } });
-    const tekIs = (etiket, isi, sinif = "dugme kucuk is-dugme") => h("button", { class: sinif, disabled: is.calisiyor, onclick: () => calistir(isi) }, etiket);
+    const tekIs = (etiket, isi) => h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(isi) }, etiket);
+    const metinDegisti = () => { kaydet(); cizZaman(); cizUst(); zamaniYaz(); };
     denetci.replaceChildren(
       h("div", { class: "ed-denetci-ust" },
         h("h2", null, `Sahne ${no}`),
@@ -538,11 +756,15 @@ export async function projeGorunumu(kok, id, kabuk) {
           await depo.dosyalar.sil(depo.gorselAnahtari(P.id, sahne.id));
           await depo.dosyalar.sil(depo.videoAnahtari(P.id, sahne.id));
           P.sahneler = P.sahneler.filter((s) => s !== sahne);
+          for (const dublaj of Object.values(P.diller)) delete dublaj.metinler[sahne.id];
           secili = Math.max(0, Math.min(secili, P.sahneler.length - 1));
           kaydet();
           ciz();
         } }, "🗑")),
-      yaziAlani("Anlatım", sahne.metin, { satir: 3, veri: { "data-anlatim": "" }, degisti: (v) => { sahne.metin = v; kaydet(); cizZaman(); cizUst(); zamaniYaz(); } }),
+      etkin
+        ? yaziAlani(`Anlatım (${dilAdi(etkin)} çevirisi)`, P.diller[etkin].metinler[sahne.id], { satir: 3, veri: { "data-anlatim": "" },
+            yerTutucu: "Çeviri yok: Dublaj bölümünden üret ya da buraya yaz.", degisti: (v) => { P.diller[etkin].metinler[sahne.id] = v; metinDegisti(); } })
+        : yaziAlani("Anlatım", sahne.metin, { satir: 3, veri: { "data-anlatim": "" }, degisti: (v) => { sahne.metin = v; metinDegisti(); } }),
       yaziAlani("Görsel tarifi (İngilizce)", sahne.prompt, { satir: 3, yerTutucu: "Boş bırakırsan anlatımdan üretilir.", veri: { "data-prompt": "" },
                                                            degisti: (v) => { sahne.prompt = v; kaydet(); } }),
       P.hareketli ? yaziAlani("Hareket tarifi (İngilizce)", sahne.hareket, { yerTutucu: ltx.VARSAYILAN_HAREKET, veri: { "data-hareket": "" },
@@ -568,32 +790,13 @@ export async function projeGorunumu(kok, id, kabuk) {
   }
 
   // ── Video (dışa aktarma) ────────────────────────────────────────────────────
-  async function sesiTopla() {
-    const plan = sesPlani(P);
-    const parcalar = [];
-    let hiz = null;
-    for (const p of plan) {
-      const kayit = await depo.dosyalar.al(depo.sesAnahtari(P.id, p.anahtar));
-      if (!kayit) throw new Error("Ses dosyası eksik: “Eksikleri üret”e bas.");
-      if (hiz !== null && kayit.hiz !== hiz) throw new Error("Ses parçalarının örnekleme hızları farklı; sesi yeniden üret.");
-      hiz = kayit.hiz;
-      parcalar.push(new Int16Array(kayit.veri));
-    }
-    if (!parcalar.length) return null;
-    const pcm = new Float32Array(parcalar.reduce((t, p) => t + p.length, 0));
-    let konum = 0;
-    for (const p of parcalar) {
-      for (let i = 0; i < p.length; i++) pcm[konum + i] = p[i] / 32768;
-      konum += p.length;
-    }
-    return { pcm, hiz };
-  }
+  const dosyaAdi = () => (P.ad || "studioflow").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "studioflow";
 
-  function cizelge(z) {
+  function cizelge(gorunum, z) {
     // Görseli olmayan sahne, kendinden önceki (yoksa sonraki) en yakın görseli kullanır.
     const gorselli = P.sahneler.map((s, i) => (s.gorselVar ? i : -1)).filter((i) => i >= 0);
-    const dilimler = [], altyazilar = [];
-    P.sahneler.forEach((sahne, i) => {
+    const dilimler = [];
+    gorunum.sahneler.forEach((sahne, i) => {
       const { bas, bit } = z.sahneler.get(sahne.id);
       if (bit - bas <= 0) return;
       if (P.hareketli && sahne.videoVar) {
@@ -604,13 +807,13 @@ export async function projeGorunumu(kok, id, kabuk) {
         const son = dilimler[dilimler.length - 1];
         if (son && son.tur === "gorsel" && son.no === no) son.bit = bit; else dilimler.push({ bas, bit, tur: "gorsel", no });
       }
-      if (P.altyazi && sahne.metin.trim()) altyazilar.push(...altyaziBloklari(sahne.metin, bas, bit));
     });
-    return { dilimler, altyazilar };
+    return dilimler;
   }
 
   function videoyuGoster() {
     if (!sonVideo) return;
+    oynatmayiDurdur();
     const kaplama = h("div", { class: "video-kaplama" },
       h("video", { src: sonVideo.adres, controls: true, playsinline: true, autoplay: true }),
       h("div", { class: "satir" },
@@ -620,7 +823,8 @@ export async function projeGorunumu(kok, id, kabuk) {
   }
 
   function videoPaneli() {
-    const z = zamanlama(P);
+    const gorunum = G();
+    const z = zamanlama(gorunum);
     const gorselli = P.sahneler.filter((s) => s.gorselVar).length;
     const durum = h("p", { class: "durum", role: "status" });
     const cubuk = h("progress", { max: "1", value: "0", hidden: true });
@@ -630,7 +834,8 @@ export async function projeGorunumu(kok, id, kabuk) {
     const paylas = h("button", { class: "dugme kucuk", hidden: !sonVideo, onclick: videoKaydet }, "Kaydet / Paylaş");
     const hazirlik = !P.sahneler.length ? "Önce sahneleri oluştur."
       : !gorselli ? "En az bir sahnenin görseli olmalı."
-      : z.sesDurumu === "eksik" ? "Ses eksik: “Eksikleri üret”e bas." : "";
+      : z.sesDurumu === "eksik" ? "Ses eksik: “Eksikleri üret”e bas."
+      : etkin && z.sesDurumu !== "tam" ? `${dilAdi(etkin)} dublajının sesi yok: Dublaj bölümünden üret.` : "";
     const olustur = h("button", { class: "dugme birincil kucuk is-dugme", disabled: is.calisiyor || !!hazirlik, onclick: async () => {
       if (is.calisiyor) return;
       oynatmayiDurdur();
@@ -643,11 +848,12 @@ export async function projeGorunumu(kok, id, kabuk) {
       try {
         await ekranAcik(async () => {
           const [en, boy] = P.boyut.split("x").map(Number);
-          durumYaz(durum, "Hazırlanıyor…");
-          const ses = z.sesDurumu === "tam" ? await sesiTopla() : null;
-          const { dilimler, altyazilar } = cizelge(z);
+          durumYaz(durum, "Ses hazırlanıyor…");
+          const ses = await sonSes(z);
           const sonuc = await disaAktar({
-            dilimler, altyazilar, ses, en, boy, yontem: yontem.value, sesBaglami: baglam,
+            dilimler: cizelge(gorunum, z), altyazilar: P.altyazi ? tumAltyazilar() : [],
+            altyaziStili: { olcek: ALTYAZI_OLCEK[P.altyaziBoyut] || 1, konum: P.altyaziKonum },
+            ses, en, boy, yontem: yontem.value, sesBaglami: baglam,
             gorselAl: async (no) => videoTuvali(await depo.dosyalar.al(depo.gorselAnahtari(P.id, P.sahneler[no].id)), en, boy),
             videoAl: async (no) => {
               const kayit = await depo.dosyalar.al(depo.videoAnahtari(P.id, P.sahneler[no].id));
@@ -658,7 +864,7 @@ export async function projeGorunumu(kok, id, kabuk) {
             ilerleme: (oran, metin) => { cubuk.value = oran; durumYaz(durum, metin); },
           });
           if (sonVideo) { URL.revokeObjectURL(sonVideo.adres); adresler.delete(sonVideo.adres); }
-          sonVideo = { ...sonuc, adres: URL.createObjectURL(sonuc.blob) };
+          sonVideo = { ...sonuc, dil: etkin, adres: URL.createObjectURL(sonuc.blob) };
           adresler.add(sonVideo.adres);
           izle.hidden = paylas.hidden = false;
           const ozet = `${en}×${boy}, ${sonuc.sure.toFixed(1)} sn video, ${sonuc.gecen.toFixed(1)} sn'de `
@@ -679,8 +885,9 @@ export async function projeGorunumu(kok, id, kabuk) {
     return [
       h("h2", null, "Video"),
       h("p", { class: "soluk" }, P.sahneler.length
-        ? `${P.sahneler.length} sahne · ${gorselli} görsel · ${sureYaz(z.toplam)}`
-          + (z.sesDurumu === "tam" ? " · sesli" : z.sesDurumu === "yok" ? " · sessiz (süre tahmini)" : "")
+        ? [`Dil: ${dilAdi(etkin)}`, `${P.sahneler.length} sahne`, `${gorselli} görsel`, sureYaz(z.toplam),
+           z.sesDurumu === "tam" ? "sesli" : z.sesDurumu === "yok" ? "sessiz (süre tahmini)" : "",
+           P.muzik ? "müzikli" : "", P.altyazi ? "altyazılı" : ""].filter(Boolean).join(" · ")
         : "Proje boş."),
       h("label", null, "Yöntem", yontem),
       hazirlik ? h("p", { class: "durum hata" }, hazirlik) : null,
@@ -692,7 +899,7 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   async function videoKaydet() {
     if (!sonVideo) return;
-    const ad = `${(P.ad || "studioflow").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "studioflow"}.${sonVideo.uzanti}`;
+    const ad = `${dosyaAdi()}${sonVideo.dil ? "-" + sonVideo.dil : ""}.${sonVideo.uzanti}`;
     const dosya = new File([sonVideo.blob], ad, { type: sonVideo.blob.type });
     if (navigator.canShare?.({ files: [dosya] })) {
       try {
@@ -707,35 +914,53 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   // ── Çizim ───────────────────────────────────────────────────────────────────
   function cizUst() {
-    const z = zamanlama(P);
+    const z = zamanlama(G());
     const gorselli = P.sahneler.filter((s) => s.gorselVar).length;
     const ses = !z.parcaSayisi ? "" : z.sesDurumu === "tam" ? "ses ✓" : z.sesDurumu === "eksik" ? "ses eksik" : "ses yok";
     ustCubuk.querySelector(".ed-ozet").textContent = P.sahneler.length
-      ? [`${P.sahneler.length} sahne`, `${gorselli} görsel`, P.hareketli ? `${P.sahneler.filter((s) => s.videoVar).length} klip` : "", ses, sureYaz(z.toplam)].filter(Boolean).join(" · ")
+      ? [etkin ? dilAdi(etkin) : "", `${P.sahneler.length} sahne`, `${gorselli} görsel`,
+         P.hareketli ? `${P.sahneler.filter((s) => s.videoVar).length} klip` : "", ses, sureYaz(z.toplam)].filter(Boolean).join(" · ")
       : "";
     uretDugmesi.disabled = is.calisiyor;
   }
 
+  const PANELLER = { sahneler: sahnelerPaneli, metin: metinPaneli, ayarlar: ayarlarPaneli, altyazi: altyaziPaneli,
+                     dublaj: dublajPaneli, muzik: muzikPaneli, video: videoPaneli };
   function cizPanel() {
     ray.replaceChildren(...RAY.map(([ad, ikon, etiket]) => h("button", {
       class: "ed-ray-oge" + (panel === ad ? " secili" : ""), "aria-pressed": String(panel === ad),
       onclick: () => { if (panel !== ad) { kaydet.simdi(); panel = ad; cizPanel(); } },
     }, h("span", { "aria-hidden": "true" }, ikon), etiket)));
-    panelKutusu.replaceChildren(...(panel === "sahneler" ? sahnelerPaneli() : panel === "metin" ? metinPaneli()
-      : panel === "ayarlar" ? ayarlarPaneli() : videoPaneli()).flat().filter(Boolean));
+    panelKutusu.replaceChildren(...PANELLER[panel]().flat().filter(Boolean));
   }
 
+  /** Zaman çizelgesi: izler aynı ölçekle (saniye başına piksel) alt alta durur. */
   function cizZaman() {
-    const z = zamanlama(P);
     if (!P.sahneler.length) return zamanCizelgesi.replaceChildren(h("p", { class: "soluk" }, "Zaman çizelgesi: sahneler burada görünür."));
-    zamanCizelgesi.replaceChildren(...P.sahneler.map((s, i) => {
+    const gorunum = G(), z = zamanlama(gorunum);
+    const sureler = gorunum.sahneler.map((s) => { const a = z.sahneler.get(s.id); return a.bit - a.bas; }).filter((s) => s > 0);
+    const olcek = Math.min(40, Math.max(16, 46 / Math.min(...sureler, 3)));
+    const px = (t) => `${Math.round(t * olcek)}px`;
+    const iz = (ikon, ad, ...ogeler) => h("div", { class: "ed-iz ed-iz-" + ad },
+      h("span", { class: "ed-iz-ad", "aria-hidden": "true" }, ikon), h("div", { class: "ed-iz-govde" }, ogeler));
+    const izler = [iz("🎞", "sahne", gorunum.sahneler.map((s, i) => {
       const a = z.sahneler.get(s.id);
       return h("button", {
         class: "ed-zc-oge" + (i === secili ? " secili" : "") + (s.gorselVar ? "" : " bos"), "data-sira": i, "data-kucuk": s.id,
-        style: `width:${Math.max(44, Math.round((a.bit - a.bas) * 14))}px;` + (kucukler.get(s.id) ? `background-image:url("${kucukler.get(s.id).adres}")` : ""),
+        style: `width:${px(a.bit - a.bas)};` + (kucukler.get(s.id) ? `background-image:url("${kucukler.get(s.id).adres}")` : ""),
         "aria-label": `Sahne ${i + 1}`, onclick: () => sec(i),
       }, h("span", null, String(i + 1)));
-    }));
+    }))];
+    if (P.altyazi) {
+      izler.push(iz("💬", "altyazi", tumAltyazilar().map((b) => h("span", {
+        class: "ed-blok", style: `left:${px(b.bas)};width:${px(b.bit - b.bas)}`, title: b.metin }, b.metin))));
+    }
+    if (Object.keys(P.diller).length) {
+      izler.push(iz("🌐", "dil", ["", ...Object.keys(P.diller)].map((kod) => h("button", {
+        class: "ed-cip" + (etkin === kod ? " secili" : ""), "data-dil": kod, onclick: () => dilSec(kod) }, dilAdi(kod) + (kod ? "" : " · asıl")))));
+    }
+    if (P.muzik) izler.push(iz("🎵", "muzik", h("span", { class: "ed-blok", style: `left:0;width:${px(z.toplam)}` }, `${P.muzik.ad} · %${P.muzik.seviye}`)));
+    zamanCizelgesi.replaceChildren(h("div", { class: "ed-zc-ic", style: `width:calc(${px(z.toplam)} + 34px)` }, izler));
   }
 
   function ciz() {

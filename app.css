@@ -251,3 +251,27 @@ body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
 .ed-ust .dugme { flex: none; }
 .editor .satir .dugme { flex: 1 1 auto; }
 .ed-kontrol .dugme { flex: none; }
+
+/* Düzenleyici: zaman çizelgesi izleri (sahne, altyazı, dil, müzik) ve yeni paneller */
+.editor { grid-template-rows: 42px auto minmax(0, 1fr) auto; }
+.ed-zc { display: block; padding: 4px 6px; max-height: 112px; overflow: auto; }
+.ed-zc-ic { display: grid; gap: 2px; min-width: 100%; }
+.ed-iz { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 6px; }
+.ed-iz-ad { position: sticky; left: 0; z-index: 1; font-size: 13px; text-align: center; background: var(--yuzey); }
+.ed-iz-govde { position: relative; height: 16px; }
+.ed-iz-sahne .ed-iz-govde { display: flex; gap: 0; height: 40px; }
+.ed-iz-sahne .ed-zc-oge { box-sizing: border-box; height: 40px; }
+.ed-iz-dil .ed-iz-govde { display: flex; gap: 4px; height: 20px; }
+.ed-blok { position: absolute; top: 0; height: 16px; box-sizing: border-box; padding: 0 4px; border-radius: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 10px/16px var(--font); color: #fff; }
+.ed-iz-altyazi .ed-blok { background: #a23d55; border-right: 1px solid var(--yuzey); }
+.ed-iz-muzik .ed-blok { background: #9a6416; }
+.ed-cip { height: 20px; padding: 0 9px; border: 1px solid var(--cizgi); border-radius: 999px; background: var(--yuzey-2); color: var(--soluk); font: 700 10.5px/1 var(--font); cursor: pointer; white-space: nowrap; }
+.ed-cip.secili { background: #6f46ad; border-color: #6f46ad; color: #fff; }
+.ed-dil-satir { display: flex; align-items: center; gap: 4px; border: 1px solid var(--cizgi); border-radius: 8px; }
+.ed-dil-satir.secili { border-color: var(--vurgu); background: var(--yuzey-2); }
+.ed-dil-ad { flex: 1; display: grid; gap: 1px; text-align: left; padding: 6px 8px; border: 0; background: transparent; color: var(--yazi); font: inherit; cursor: pointer; min-width: 0; }
+.ed-dil-ad small { color: var(--soluk); font-size: 11px; }
+.ed-muzik-ad { margin: 0; overflow-wrap: anywhere; }
+.editor input[type=range] { width: 100%; accent-color: var(--vurgu); }
+.ed-altyazi[data-konum="orta"] { bottom: auto; top: 46%; }
+.ed-altyazi[data-konum="ust"] { bottom: auto; top: 20%; }

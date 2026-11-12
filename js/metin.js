@@ -150,3 +150,31 @@ export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, on
     });
   }
 }
+
+const CEVIRI_SISTEM =
+  "You translate narration for video dubbing. For each segment write the target-language version as natural "
+  + "spoken narration: keep the meaning, tone and order, keep roughly the same length, and use the names that "
+  + "are customary in the target language. Do not add or drop information. Do not add notes.\n"
+  + "Reply ONLY with a JSON array. Every element must be exactly: "
+  + '{"index": <int>, "text": "<string>"}.';
+
+/**
+ * Sahne anlatımlarını hedef dile çevirir. `sahneler`: `[{ index, metin }]`; `bildir(sahne, ceviri)`
+ * her grup bittikçe çağrılır.
+ */
+export async function cevir({ anahtar, kaynakDil, hedefDil, sahneler, bildir, iptal }) {
+  for (let i = 0; i < sahneler.length; i += 12) {
+    if (iptal?.()) throw new Error("Durduruldu.");
+    const grup = sahneler.slice(i, i + 12);
+    const istek = [`Source language: ${DILLER[kaynakDil] || kaynakDil}`, `Target language: ${DILLER[hedefDil] || hedefDil}`,
+                   `There are ${grup.length} segments; translate each one.`, "",
+                   ...grup.map((s) => `Segment ${s.index}: ${s.metin}`)].join("\n");
+    const kayitlar = jsonCoz(await uret(anahtar, CEVIRI_SISTEM, istek, true));
+    if (!Array.isArray(kayitlar)) throw new Error("Gemini çeviriyi beklenen biçimde döndürmedi. Yeniden dene.");
+    grup.forEach((s, sira) => {
+      const kayit = kayitlar.find((k) => k && String(k.index) === String(s.index)) || kayitlar[sira];
+      const metin = String(kayit?.text || "").trim();
+      if (metin) bildir?.(s, metin);
+    });
+  }
+}
