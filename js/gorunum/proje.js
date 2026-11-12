@@ -43,6 +43,10 @@ export async function projeGorunumu(kok, id, kabuk) {
   let secili = 0;
   let sonVideo = null;
   let muzikPcm = null;               // çözülmüş müzik: { pcm, hiz } (bellekte)
+  let imlec = 0;                     // oynatma çizgisinin konumu (saniye)
+  let zcOlcek = 20;                  // zaman çizelgesi ölçeği: saniye başına piksel
+  let zcAcik = !!ayar.zcAcik;        // çizelge büyütülmüş mü (bütün izler görünür)
+  const IZ_SOL = 32;                 // iz adı sütununun genişliği (piksel)
 
   // Etkin dil: önizleme, zaman çizelgesi, altyazı ve dışa aktarma bu dile göre çalışır ("" = asıl dil).
   let etkin = P.diller[P.etkinDil] ? P.etkinDil : "";
@@ -446,7 +450,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     const gorunum = G();
     const z = zamanlama(gorunum);
     if (!P.sahneler.length || !(z.toplam > 0)) return;
-    let bas = z.sahneler.get(P.sahneler[secili].id).bas;
+    let bas = imlec;                    // oynatma çizgisinin durduğu yerden başlar
     if (bas >= z.toplam - 0.05) bas = 0;
     let saat;
     const imza = sesImzasi();
@@ -481,6 +485,7 @@ export async function projeGorunumu(kok, id, kabuk) {
       if (t >= z.toplam || (sesli && oynatma.ses.ended)) return oynatmayiDurdur();
       const sira = gorunum.sahneler.findIndex((s) => { const a = z.sahneler.get(s.id); return t >= a.bas && t < a.bit; });
       if (sira >= 0 && sira !== secili) sec(sira, true);
+      imleciKoy(t, true);
       zamanEtiketi.textContent = `${sureYaz(t)} / ${sureYaz(z.toplam)}`;
       if (P.altyazi && sira >= 0) {
         const a = z.sahneler.get(gorunum.sahneler[sira].id);
@@ -502,13 +507,54 @@ export async function projeGorunumu(kok, id, kabuk) {
     zamanCizelgesi.querySelector(".ed-zc-oge.secili")?.scrollIntoView({ block: "nearest", inline: "nearest" });
     cizTuval();
     cizDenetci();
-    if (!oynatirken) zamaniYaz();
+    if (!oynatirken) {
+      altyaziKutusu.hidden = true;
+      imleciKoy(zamanlama(G()).sahneler.get(P.sahneler[secili].id)?.bas || 0);
+      zamaniYaz();
+    }
+  }
+
+  // Oynatma çizgisi: zaman çizelgesinde `imlec` anını gösteren dikey çizgi.
+  const imlecCizgi = h("div", { class: "ed-imlec", "aria-hidden": "true" });
+  function imleciKoy(t, izle = false) {
+    imlec = Math.max(0, t);
+    const x = IZ_SOL + imlec * zcOlcek;
+    imlecCizgi.style.left = `${x}px`;
+    if (izle) {         // oynatırken çizgi görünür alanda kalsın
+      const sol = zamanCizelgesi.scrollLeft, gen = zamanCizelgesi.clientWidth;
+      if (x > sol + gen - 30 || x < sol + IZ_SOL) zamanCizelgesi.scrollLeft = Math.max(0, x - gen / 3);
+    }
+  }
+
+  /** Parmakla gezinme: önizleme, zaman, altyazı ve klip `t` anına gelir (oynatma durur). */
+  function gez(t) {
+    oynatmayiDurdur();
+    const gorunum = G(), z = zamanlama(gorunum);
+    t = Math.max(0, Math.min(Math.max(0, z.toplam - 0.02), t));
+    imleciKoy(t);
+    zamanEtiketi.textContent = `${sureYaz(t)} / ${sureYaz(z.toplam)}`;
+    const sira = gorunum.sahneler.findIndex((s) => { const a = z.sahneler.get(s.id); return t >= a.bas && t < a.bit; });
+    if (sira < 0) return;
+    const a = z.sahneler.get(gorunum.sahneler[sira].id);
+    if (sira !== secili) {
+      secili = sira;
+      for (const oge of editor.querySelectorAll("[data-sira]")) oge.classList.toggle("secili", Number(oge.dataset.sira) === secili);
+      cizTuval();
+      cizDenetci();
+    } else {
+      const klip = tuval.querySelector("video");          // aynı sahnede: klip o ana götürülür
+      if (klip?.duration) klip.currentTime = Math.min(klip.duration - 0.05, t - a.bas);
+    }
+    if (P.altyazi) {
+      const blok = altyaziBloklari(gorunum.sahneler[sira].metin, a.bas, a.bit).find((b) => t >= b.bas && t < b.bit);
+      altyaziKutusu.textContent = blok?.metin || "";
+      altyaziKutusu.hidden = !blok;
+    }
   }
 
   function zamaniYaz() {
     const z = zamanlama(G());
-    const a = P.sahneler[secili] && z.sahneler.get(P.sahneler[secili].id);
-    zamanEtiketi.textContent = `${sureYaz(a?.bas || 0)} / ${sureYaz(z.toplam)}`;
+    zamanEtiketi.textContent = `${sureYaz(Math.min(imlec, z.toplam))} / ${sureYaz(z.toplam)}`;
   }
 
   function dilSec(kod) {
@@ -746,7 +792,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     } });
     const tekIs = (etiket, isi) => h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(isi) }, etiket);
     const metinDegisti = () => { kaydet(); cizZaman(); cizUst(); zamaniYaz(); };
-    denetci.replaceChildren(
+    denetci.replaceChildren(...[
       h("div", { class: "ed-denetci-ust" },
         h("h2", null, `Sahne ${no}`),
         h("span", { class: "soluk" }, a && a.bit > a.bas ? `${sureYaz(a.bas)} – ${sureYaz(a.bit)}${z.sesDurumu === "tam" ? "" : " (tahmini)"}` : ""),
@@ -786,7 +832,7 @@ export async function projeGorunumu(kok, id, kabuk) {
           adim(`Sahne ${no} klibi üretiliyor…`);
           await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
           return `Sahne ${no} klibi hazır.`;
-        }) : null));
+        }) : null)].filter(Boolean));
   }
 
   // ── Video (dışa aktarma) ────────────────────────────────────────────────────
@@ -934,33 +980,61 @@ export async function projeGorunumu(kok, id, kabuk) {
     panelKutusu.replaceChildren(...PANELLER[panel]().flat().filter(Boolean));
   }
 
-  /** Zaman çizelgesi: izler aynı ölçekle (saniye başına piksel) alt alta durur. */
+  /**
+   * Zaman çizelgesi: cetvel + izler (Sahneler, Seslendirme, Dublaj, Müzik, Altyazı) aynı ölçekle alt alta
+   * durur. Küçükken yalnızca cetvel ve sahne izi görünür. Cetvelde parmak sürüklenince önizleme o ana gider.
+   */
   function cizZaman() {
     if (!P.sahneler.length) return zamanCizelgesi.replaceChildren(h("p", { class: "soluk" }, "Zaman çizelgesi: sahneler burada görünür."));
     const gorunum = G(), z = zamanlama(gorunum);
     const sureler = gorunum.sahneler.map((s) => { const a = z.sahneler.get(s.id); return a.bit - a.bas; }).filter((s) => s > 0);
-    const olcek = Math.min(40, Math.max(16, 46 / Math.min(...sureler, 3)));
-    const px = (t) => `${Math.round(t * olcek)}px`;
-    const iz = (ikon, ad, ...ogeler) => h("div", { class: "ed-iz ed-iz-" + ad },
-      h("span", { class: "ed-iz-ad", "aria-hidden": "true" }, ikon), h("div", { class: "ed-iz-govde" }, ogeler));
-    const izler = [iz("🎞", "sahne", gorunum.sahneler.map((s, i) => {
+    zcOlcek = Math.min(40, Math.max(16, 46 / Math.min(...sureler, 3)));
+    const px = (t) => `${Math.round(t * zcOlcek)}px`;
+    const iz = (ad, ikon, etiket, ...ogeler) => h("div", { class: "ed-iz ed-iz-" + ad },
+      h("span", { class: "ed-iz-ad", title: etiket, "aria-label": etiket }, ikon), h("div", { class: "ed-iz-govde", style: `width:${px(z.toplam)}` }, ogeler));
+    // Boş iz: ne eksik olduğunu yazar; dokununca ilgili bölüm açılır.
+    const bosIz = (metin, hedef) => h("button", { class: "ed-blok ed-bos-iz", style: `left:0;width:${px(z.toplam)}`,
+      onclick: () => { panel = hedef; cizPanel(); } }, metin);
+
+    // Cetvel: saniye işaretleri; parmakla gezinme alanı.
+    const adimSn = zcOlcek >= 30 ? 1 : zcOlcek >= 18 ? 2 : 5;
+    const isaretler = [];
+    for (let t = 0; t <= z.toplam; t += adimSn) isaretler.push(h("span", { style: `left:${px(t)}` }, sureYaz(t)));
+    const konumdan = (o) => (o.clientX - cetvel.getBoundingClientRect().left) / zcOlcek;
+    const cetvel = h("div", { class: "ed-cetvel", style: `width:${px(z.toplam)}`, "aria-label": "Zaman cetveli: sürükleyerek gezin",
+      onpointerdown: (o) => { cetvel.setPointerCapture(o.pointerId); gez(konumdan(o)); },
+      onpointermove: (o) => { if (cetvel.hasPointerCapture(o.pointerId)) gez(konumdan(o)); } }, isaretler);
+    const ac = h("button", { class: "ed-zc-ac", "aria-label": zcAcik ? "Çizelgeyi küçült" : "Çizelgeyi büyüt (bütün izler)",
+      onclick: () => { zcAcik = !zcAcik; ayarGuncelle({ zcAcik: zcAcik || "" }); cizZaman(); } }, zcAcik ? "▾" : "▴");
+    const izler = [h("div", { class: "ed-iz ed-iz-cetvel" }, ac, cetvel)];
+
+    izler.push(iz("sahne", "🎞", "Sahneler", gorunum.sahneler.map((s, i) => {
       const a = z.sahneler.get(s.id);
       return h("button", {
         class: "ed-zc-oge" + (i === secili ? " secili" : "") + (s.gorselVar ? "" : " bos"), "data-sira": i, "data-kucuk": s.id,
         style: `width:${px(a.bit - a.bas)};` + (kucukler.get(s.id) ? `background-image:url("${kucukler.get(s.id).adres}")` : ""),
         "aria-label": `Sahne ${i + 1}`, onclick: () => sec(i),
       }, h("span", null, String(i + 1)));
-    }))];
-    if (P.altyazi) {
-      izler.push(iz("💬", "altyazi", tumAltyazilar().map((b) => h("span", {
-        class: "ed-blok", style: `left:${px(b.bas)};width:${px(b.bit - b.bas)}`, title: b.metin }, b.metin))));
+    })));
+
+    if (zcAcik) {
+      izler.push(iz("ses", "🎙", "Seslendirme", z.sesDurumu === "tam"
+        ? h("span", { class: "ed-blok", style: `left:0;width:${px(z.toplam)}` }, `Seslendirme · ${dilAdi(etkin)} · ${sureYaz(z.toplam)}`)
+        : bosIz(z.sesDurumu === "eksik" ? "Ses eksik: “Eksikleri üret”e bas" : "Ses yok: “Eksikleri üret”e bas", "sahneler")));
+      izler.push(iz("dil", "🌐", "Dublaj", Object.keys(P.diller).length
+        ? ["", ...Object.keys(P.diller)].map((kod) => h("button", {
+            class: "ed-cip" + (etkin === kod ? " secili" : ""), "data-dil": kod, onclick: () => dilSec(kod) }, dilAdi(kod) + (kod ? "" : " · asıl")))
+        : bosIz("Dublaj yok: dil eklemek için dokun", "dublaj")));
+      izler.push(iz("muzik", "🎵", "Müzik", P.muzik
+        ? h("span", { class: "ed-blok", style: `left:0;width:${px(z.toplam)}` }, `${P.muzik.ad} · %${P.muzik.seviye}`)
+        : bosIz("Müzik yok: eklemek için dokun", "muzik")));
+      izler.push(iz("altyazi", "💬", "Altyazı", P.altyazi
+        ? tumAltyazilar().map((b) => h("span", { class: "ed-blok", style: `left:${px(b.bas)};width:${px(b.bit - b.bas)}`, title: b.metin }, b.metin))
+        : bosIz("Altyazı kapalı: açmak için dokun", "altyazi")));
     }
-    if (Object.keys(P.diller).length) {
-      izler.push(iz("🌐", "dil", ["", ...Object.keys(P.diller)].map((kod) => h("button", {
-        class: "ed-cip" + (etkin === kod ? " secili" : ""), "data-dil": kod, onclick: () => dilSec(kod) }, dilAdi(kod) + (kod ? "" : " · asıl")))));
-    }
-    if (P.muzik) izler.push(iz("🎵", "muzik", h("span", { class: "ed-blok", style: `left:0;width:${px(z.toplam)}` }, `${P.muzik.ad} · %${P.muzik.seviye}`)));
-    zamanCizelgesi.replaceChildren(h("div", { class: "ed-zc-ic", style: `width:calc(${px(z.toplam)} + 34px)` }, izler));
+    zamanCizelgesi.classList.toggle("acik", zcAcik);
+    zamanCizelgesi.replaceChildren(h("div", { class: "ed-zc-ic", style: `width:calc(${px(z.toplam)} + ${IZ_SOL + 8}px)` }, izler, imlecCizgi));
+    imleciKoy(Math.min(imlec, z.toplam));
   }
 
   function ciz() {
