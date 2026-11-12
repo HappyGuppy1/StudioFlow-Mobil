@@ -155,9 +155,6 @@ progress { width: 100%; height: 10px; accent-color: var(--vurgu); }
 .ozet-satir .dugme { flex: none; margin-left: auto; }
 
 .sahne-ust { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
-.kucuk { width: 54px; height: 72px; border-radius: 8px; overflow: hidden; background: var(--yuzey-3); border: 1px solid var(--cizgi); }
-.kucuk img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.kucuk.bos { background: repeating-linear-gradient(135deg, var(--yuzey-2) 0 6px, var(--yuzey-3) 6px 12px); }
 .sahne-bilgi { display: grid; min-width: 0; }
 .sahne-bilgi .soluk { font-size: 13px; }
 
@@ -167,3 +164,90 @@ progress { width: 100%; height: 10px; accent-color: var(--vurgu); }
 .rapor .var { color: var(--tamam); } .rapor .yok { color: var(--hata); } .rapor .bilinmiyor { color: var(--soluk); }
 
 @media (max-width: 360px) { .izgara-2 { grid-template-columns: 1fr; } }
+
+/* ── Düzenleyici (proje ekranı): yatay, masaüstü StudioFlow düzeni ──
+   üst çubuk · [şerit | panel | önizleme | sahne paneli] · alt zaman çizelgesi */
+body.editor-acik { overflow: hidden; padding: 0; }
+body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
+.editor {
+  position: fixed; inset: 0; z-index: 10; background: var(--zemin);
+  display: grid; grid-template-rows: 42px auto minmax(0, 1fr) 54px;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  font-size: 13.5px;
+}
+.bosluk { flex: 1; }
+.ed-ikon { flex: none; width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--yazi); font-size: 18px; line-height: 1; cursor: pointer; }
+.ed-ust { display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid var(--cizgi); background: var(--yuzey); min-width: 0; }
+.ed-ad { margin: 0; font-size: 14.5px; font-weight: 650; max-width: 26%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-ozet { color: var(--soluk); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.editor .dugme { min-height: 34px; padding: 6px 12px; font-size: 13px; flex: 0 1 auto; border-radius: 8px; }
+.editor .dugme.ikon { width: 38px; padding: 0; font-size: 15px; }
+.ed-is { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 10px; background: var(--yuzey-2); border-bottom: 1px solid var(--cizgi); }
+.ed-is .durum { flex: 1; min-width: 0; font-size: 12.5px; max-height: 2.9em; overflow-y: auto; }
+.ed-is progress { flex-basis: 100%; height: 4px; }
+.ed-calisma { display: grid; grid-template-columns: 54px minmax(170px, 25%) minmax(0, 1fr) minmax(210px, 31%); min-height: 0; }
+.ed-ray { display: flex; flex-direction: column; gap: 2px; padding: 4px 3px; background: var(--yuzey); border-right: 1px solid var(--cizgi); overflow-y: auto; }
+.ed-ray-oge { display: grid; justify-items: center; gap: 1px; padding: 6px 0; border: 0; border-radius: 8px; background: transparent; color: var(--soluk); font: 600 10px/1.1 var(--font); cursor: pointer; }
+.ed-ray-oge span { font-size: 17px; }
+.ed-ray-oge.secili { background: var(--yuzey-3); color: var(--yazi); }
+.ed-panel, .ed-denetci { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; overflow-y: auto; min-width: 0; background: var(--yuzey); overscroll-behavior: contain; }
+.ed-panel { border-right: 1px solid var(--cizgi); }
+.ed-denetci { border-left: 1px solid var(--cizgi); }
+.editor h2 { margin: 0; font-size: 13.5px; font-weight: 650; }
+.editor label { font-size: 11.5px; gap: 3px; }
+.editor input[type=text], .editor textarea, .editor select { min-height: 34px; padding: 6px 8px; font-size: 13px; border-radius: 8px; }
+.editor .onay { min-height: 30px; font-size: 13px; }
+.editor .onay input { width: 18px; height: 18px; }
+.editor .soluk { font-size: 11.5px; }
+.editor .izgara-2 { gap: 8px; }
+.editor .satir { gap: 6px; }
+.ed-yazi { resize: none; cursor: pointer; overflow: hidden; }
+.ed-denetci-ust { display: flex; align-items: center; gap: 8px; }
+.ed-izgara { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+.ed-kare { position: relative; aspect-ratio: 3 / 4; border: 2px solid transparent; border-radius: 7px; background: var(--yuzey-3) center / cover no-repeat; color: #fff; cursor: pointer; padding: 0; }
+.ed-kare span, .ed-zc-oge span { position: absolute; left: 4px; bottom: 2px; font: 700 11px/1 var(--font); text-shadow: 0 1px 3px #000; }
+.ed-kare i { position: absolute; right: 4px; top: 3px; font: normal 9px/1 var(--font); text-shadow: 0 1px 3px #000; }
+.ed-kare.secili, .ed-zc-oge.secili { border-color: var(--vurgu); }
+.ed-sahne { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: #07090d; }
+.ed-tuval-kap { display: grid; place-items: center; min-height: 0; padding: 6px; }
+.ed-tuval { position: relative; max-width: 100%; max-height: 100%; height: 100%; background: #000; border-radius: 6px; overflow: hidden; display: grid; place-items: center; }
+.ed-tuval img, .ed-tuval video { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 0; max-height: none; }
+.ed-bos { margin: 0; color: var(--soluk); font-size: 12px; }
+.ed-etiket { position: absolute; left: 6px; top: 5px; font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000; }
+.ed-altyazi { position: absolute; left: 4%; right: 4%; bottom: 12%; text-align: center; color: #fff; font-weight: 700; font-size: 11px; line-height: 1.25; text-shadow: 0 0 3px #000, 0 1px 3px #000; }
+.ed-kontrol { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 4px 6px 6px; }
+.ed-zaman { margin-left: 6px; color: var(--soluk); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ed-zc { display: flex; align-items: stretch; gap: 3px; padding: 5px 8px; overflow-x: auto; background: var(--yuzey); border-top: 1px solid var(--cizgi); }
+.ed-zc > .soluk { align-self: center; }
+.ed-zc-oge { position: relative; flex: none; border: 2px solid transparent; border-radius: 6px; background: var(--yuzey-3) center / cover no-repeat; color: #fff; cursor: pointer; padding: 0; }
+.ed-zc-oge.bos { background-image: repeating-linear-gradient(135deg, var(--yuzey-2) 0 6px, var(--yuzey-3) 6px 12px); }
+
+/* Dik tutulan telefonda düzenleyici yerine "yan çevir" uyarısı görünür. */
+.ed-cevir { display: none; }
+@media (orientation: portrait) and (max-width: 700px) {
+  .editor > :not(.ed-cevir) { display: none; }
+  .editor { display: block; }
+  .ed-cevir { display: grid; align-content: center; justify-items: center; gap: 12px; height: 100%; padding: 24px; text-align: center; font-size: 16px; }
+  .ed-cevir p { margin: 0; }
+  .ed-cevir-ikon { font-size: 54px; line-height: 1; color: var(--vurgu); }
+  .ed-cevir .dugme { min-height: 46px; padding: 10px 18px; font-size: 15px; width: min(280px, 100%); }
+}
+
+/* Tam ekran yazı düzenleyici ve video izleme */
+.yazi-kaplama, .video-kaplama {
+  position: fixed; inset: 0; z-index: 30; background: var(--zemin); display: flex; flex-direction: column; gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
+}
+.yazi-ust { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.yazi-ust .dugme { flex: none; min-height: 38px; }
+.yazi-alan { flex: 1; min-height: 0; resize: none; font-size: 16px; }
+.video-kaplama video { flex: 1; min-height: 0; max-height: none; object-fit: contain; }
+.video-kaplama .satir { justify-content: center; }
+.video-kaplama .dugme { flex: 0 1 200px; }
+/* Düzenleyici: panel öğeleri sıkışmasın, düğme yazıları tek satırda kalsın */
+.ed-panel > *, .ed-denetci > * { flex: none; }
+.ed-panel > .dugme, .ed-denetci > .dugme { align-self: stretch; }
+.editor .dugme { white-space: nowrap; }
+.ed-ust .dugme { flex: none; }
+.editor .satir .dugme { flex: 1 1 auto; }
+.ed-kontrol .dugme { flex: none; }

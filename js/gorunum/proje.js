@@ -1,4 +1,5 @@
-// Proje ekranı: Senaryo → Sahneler → Video.
+// Proje ekranı (düzenleyici): yatay ekranda, masaüstü StudioFlow'daki düzenle.
+//   üst çubuk · [şerit | panel | önizleme | sahne paneli] · alt zaman çizelgesi
 import { h, secenekler, durumYaz, geciktir, ekranAcik, sureYaz } from "../dom.js";
 import * as depo from "../depo.js";
 import { ayar, ayarGuncelle, ltxSpaceleri } from "../ayar.js";
@@ -16,6 +17,7 @@ import { disaAktar } from "../disa_aktar.js";
 const BOYUTLAR = [["720x1280", "Dikey 720 × 1280"], ["1080x1920", "Dikey 1080 × 1920"],
                   ["1280x720", "Yatay 1280 × 720"], ["1920x1080", "Yatay 1920 × 1080"]];
 const SURELER = [30, 45, 60, 90, 120, 180, 300];
+const RAY = [["sahneler", "🎞", "Sahneler"], ["metin", "📝", "Metin"], ["ayarlar", "⚙", "Ayarlar"], ["video", "🎬", "Video"]];
 const bekle = (ms) => new Promise((coz) => setTimeout(coz, ms));
 
 export async function projeGorunumu(kok, id, kabuk) {
@@ -28,28 +30,93 @@ export async function projeGorunumu(kok, id, kabuk) {
   document.addEventListener("visibilitychange", gizlenince);
 
   const kucukler = new Map();        // sahne id → { adres, surum }
+  const klipler = new Map();         // sahne id → { adres, surum }
   const adresler = new Set();        // serbest bırakılacak nesne adresleri
   const is = { calisiyor: false, iptal: false };
-  let sekme = P.sahneler.length ? "sahneler" : "senaryo";
+  let panel = P.sahneler.length ? "sahneler" : "metin";
+  let secili = 0;
   let sonVideo = null;
 
-  // ── Kalıcı iş çubuğu: sekme değişse de çalışan işin durumu görünür ──────────
+  // ── İskelet ─────────────────────────────────────────────────────────────────
   const isDurumu = h("p", { class: "durum", role: "status" });
   const isCubugu = h("progress", { max: "1", hidden: true });
   const durdur = h("button", { class: "dugme kucuk", hidden: true, onclick: () => {
     is.iptal = true;
     durumYaz(isDurumu, "Durduruluyor… (süren istek bitince durur)");
-  } }, "Durdur");
-  const isAlani = h("div", { class: "is-alani", hidden: true }, h("div", { class: "is-satir" }, isDurumu, durdur), isCubugu);
+  } }, "⏹ Durdur");
+  const isKapat = h("button", { class: "ed-ikon", "aria-label": "Mesajı kapat", onclick: () => { isAlani.hidden = true; } }, "✕");
+  const isAlani = h("div", { class: "ed-is", hidden: true }, isDurumu, durdur, isKapat, isCubugu);
 
+  const adEtiketi = h("h1", { class: "ed-ad" }, P.ad);
+  const uretDugmesi = h("button", { class: "dugme birincil kucuk is-dugme", onclick: () => tumunuUret() }, "▶ Eksikleri üret");
+  const ustCubuk = h("header", { class: "ed-ust" },
+    h("button", { class: "ed-ikon", "aria-label": "Projelere dön", onclick: () => { location.hash = "#/"; } }, "‹"),
+    adEtiketi, h("span", { class: "ed-ozet" }), h("span", { class: "bosluk" }), uretDugmesi,
+    h("button", { class: "dugme kucuk", onclick: () => { panel = "video"; ciz(); } }, "Dışa aktar"));
+  const ray = h("nav", { class: "ed-ray", "aria-label": "Bölümler" });
+  const panelKutusu = h("aside", { class: "ed-panel" });
+  const tuval = h("div", { class: "ed-tuval" });
+  const zamanEtiketi = h("span", { class: "ed-zaman" }, "0:00 / 0:00");
+  const oynatDugmesi = h("button", { class: "dugme ikon birincil", "aria-label": "Oynat / duraklat", onclick: () => oynat() }, "▶");
+  const sahneAlani = h("main", { class: "ed-sahne" },
+    h("div", { class: "ed-tuval-kap" }, tuval),
+    h("div", { class: "ed-kontrol" },
+      h("button", { class: "dugme ikon", "aria-label": "Önceki sahne", onclick: () => sec(secili - 1) }, "⏮"),
+      oynatDugmesi,
+      h("button", { class: "dugme ikon", "aria-label": "Sonraki sahne", onclick: () => sec(secili + 1) }, "⏭"),
+      zamanEtiketi));
+  const denetci = h("aside", { class: "ed-denetci" });
+  const zamanCizelgesi = h("section", { class: "ed-zc", "aria-label": "Zaman çizelgesi" });
+  const cevir = h("div", { class: "ed-cevir" },
+    h("p", { class: "ed-cevir-ikon", "aria-hidden": "true" }, "⟳"),
+    h("p", null, "Düzenleyici yatay ekranda çalışır."),
+    h("p", { class: "soluk" }, "Telefonu yan çevir ya da aşağıdaki düğmeye bas."),
+    h("button", { class: "dugme birincil", onclick: () => yatayaGec(true) }, "Yatay ekrana geç"),
+    h("button", { class: "dugme", onclick: () => { location.hash = "#/"; } }, "‹ Projelere dön"));
+  const editor = h("div", { class: "editor" }, ustCubuk, isAlani,
+    h("div", { class: "ed-calisma" }, ray, panelKutusu, sahneAlani, denetci), zamanCizelgesi, cevir);
+  document.body.classList.add("editor-acik");
+  kok.append(editor);
+
+  // Yatay kilit: Android'de kurulu uygulamada doğrudan, tarayıcıda tam ekranla çalışır. iOS desteklemez;
+  // orada dik tutulunca "yan çevir" uyarısı görünür.
+  let tamEkranBizden = false;
+  async function yatayaGec(tamEkran) {
+    try {
+      if (tamEkran && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+        tamEkranBizden = true;
+      }
+      await screen.orientation?.lock?.("landscape");
+    } catch { /* desteklenmiyor: uyarı ekranı kalır */ }
+  }
+  yatayaGec(false);
+
+  // ── Tam ekran yazı düzenleyici: yatayda klavye ekranı kapladığı için uzun yazılar ayrı açılır ──
+  function yaziAlani(etiket, deger, { yerTutucu = "", satir = 2, degisti, veri = {} } = {}) {
+    const kutu = h("textarea", { rows: String(satir), readonly: true, placeholder: yerTutucu, value: deger || "", class: "ed-yazi", ...veri,
+      onclick: () => {
+        const alan = h("textarea", { class: "yazi-alan", placeholder: yerTutucu, value: kutu.value });
+        const kapat = () => { kutu.value = alan.value; degisti?.(alan.value); kaplama.remove(); };
+        const kaplama = h("div", { class: "yazi-kaplama" },
+          h("div", { class: "yazi-ust" }, h("strong", null, etiket), h("span", { class: "bosluk" }),
+            h("button", { class: "dugme birincil kucuk", onclick: kapat }, "Tamam")),
+          alan);
+        document.body.append(kaplama);
+        alan.focus();
+      } });
+    return h("label", null, etiket, kutu);
+  }
+
+  // ── İş yürütme ──────────────────────────────────────────────────────────────
   const adim = (metin, oran) => {
     durumYaz(isDurumu, metin);
     if (oran == null) isCubugu.removeAttribute("value"); else isCubugu.value = oran;
   };
   const durduysa = () => { if (is.iptal) throw new Error("Durduruldu. Tamamlanan adımlar kaydedildi."); };
-  // Hesap havuzu: kotası biten hesap atlanır, sıradakiyle sürer; geçişler iş çubuğuna yazılır.
+  // Hesap havuzu: kotası biten hesap atlanır, sıradakiyle sürer; geçişler iş satırına yazılır.
   const hesapla = (hizmet) => (isi) => havuz.hesaplarla(hizmet, isi, { bildir: (mesaj) => adim(mesaj), iptal: () => is.iptal });
-  const cloudflareHazir = () => havuz.hesapVar("cloudflare");
+  const kilitle = (durum) => editor.querySelectorAll(".is-dugme").forEach((d) => { d.disabled = durum; });
 
   async function calistir(is_) {
     if (is.calisiyor) return;
@@ -58,6 +125,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     isAlani.hidden = false;
     isCubugu.hidden = false;
     durdur.hidden = false;
+    isKapat.hidden = true;
     kilitle(true);
     try {
       const mesaj = await ekranAcik(is_);
@@ -68,12 +136,12 @@ export async function projeGorunumu(kok, id, kabuk) {
       is.calisiyor = false;
       isCubugu.hidden = true;
       durdur.hidden = true;
+      isKapat.hidden = false;
       kaydet();
       kaydet.simdi();
       ciz();
     }
   }
-  const kilitle = (durum) => govde.querySelectorAll(".is-dugme").forEach((d) => { d.disabled = durum; });
 
   // ── Üretim adımları ─────────────────────────────────────────────────────────
   async function promptAdimi(hedefler) {
@@ -82,7 +150,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     const sira = new Map(P.sahneler.map((s, i) => [s.id, i + 1]));
     const hedefNo = new Set(liste.map((s) => sira.get(s.id)));
     let yazilan = 0;
-    adim(`Prompt'lar yazılıyor: 0 / ${liste.length}`, 0);
+    adim(`Görsel tarifleri yazılıyor: 0 / ${liste.length}`, 0);
     await metinAI.promptlariYaz({
       anahtar: hesapla("gemini"), dil: P.dil, stil: P.gorselStili,
       tamMetin: P.sahneler.map((s) => s.metin).join(" "),
@@ -95,11 +163,8 @@ export async function projeGorunumu(kok, id, kabuk) {
         sahne.prompt = prompt;
         if (hareket) sahne.hareket = hareket;
         kaydet();
-        const alan = govde.querySelector(`[data-prompt="${sahne.id}"]`);
-        if (alan) alan.value = prompt;
-        const hareketAlani = govde.querySelector(`[data-hareket="${sahne.id}"]`);
-        if (hareketAlani && hareket) hareketAlani.value = hareket;
-        adim(`Prompt'lar yazılıyor: ${++yazilan} / ${liste.length}`, yazilan / liste.length);
+        if (P.sahneler[secili] === sahne) cizDenetci();
+        adim(`Görsel tarifleri yazılıyor: ${++yazilan} / ${liste.length}`, yazilan / liste.length);
       },
     });
     return yazilan;
@@ -140,6 +205,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     }
     kaydet();
     await kucukYukle(sahne);
+    if (P.sahneler[secili] === sahne) { cizTuval(); cizDenetci(); }
   }
 
   /** Sahnenin görselini LTX ile hareketli klibe çevirir; klip sahne süresine göre istenir. */
@@ -159,6 +225,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     sahne.videoVar = true;
     sahne.videoSurum = (sahne.videoSurum || 0) + 1;
     await depo.projeler.yaz(P);
+    if (P.sahneler[secili] === sahne) cizTuval();
   }
 
   async function klipAdimi(hedefler) {
@@ -202,17 +269,18 @@ export async function projeGorunumu(kok, id, kabuk) {
   }
 
   const tumunuUret = () => calistir(async () => {
-    if (!P.sahneler.length) throw new Error("Önce Senaryo sekmesinde sahneleri oluştur.");
+    if (!P.sahneler.length) throw new Error("Önce Metin bölümünde senaryoyu yazıp sahnelere böl.");
     if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: API sayfasından kasaya bağlanıp ekle.");
     const ozet = [];
     const promptsuz = P.sahneler.filter((s) => !(s.prompt || "").trim());
-    if (promptsuz.length) ozet.push(`${await promptAdimi(promptsuz)} prompt`);
+    if (promptsuz.length) ozet.push(`${await promptAdimi(promptsuz)} görsel tarifi`);
     durduysa();
     const ses = await sesAdimi();
     if (ses) ozet.push(`${ses} ses parçası`);
     const gorselsiz = P.sahneler.filter((s) => !s.gorselVar);
-    if (gorselsiz.length && cloudflareHazir()) ozet.push(`${await gorselAdimi(gorselsiz)} görsel`);
-    let not = gorselsiz.length && !cloudflareHazir()
+    const cloudflareVar = havuz.hesapVar("cloudflare");
+    if (gorselsiz.length && cloudflareVar) ozet.push(`${await gorselAdimi(gorselsiz)} görsel`);
+    let not = gorselsiz.length && !cloudflareVar
       ? " Görseller için Cloudflare hesabı yok (API sayfası); galeriden ekleyebilirsin." : "";
     if (P.hareketli) {
       const klipsiz = P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim());
@@ -222,7 +290,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     return (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : "Her şey zaten hazır.") + not;
   });
 
-  // ── Küçük görseller ─────────────────────────────────────────────────────────
+  // ── Görsel ve klip adresleri ────────────────────────────────────────────────
   async function kucukYukle(sahne) {
     const eski = kucukler.get(sahne.id);
     if (eski?.surum === sahne.gorselSurum) return eski.adres;
@@ -232,216 +300,265 @@ export async function projeGorunumu(kok, id, kabuk) {
     const adres = URL.createObjectURL(kayittanBlob(kayit));
     adresler.add(adres);
     kucukler.set(sahne.id, { adres, surum: sahne.gorselSurum });
-    const resim = govde.querySelector(`[data-kucuk="${sahne.id}"]`);
-    if (resim) { resim.src = adres; resim.hidden = false; resim.parentElement.classList.remove("bos"); }
+    for (const oge of editor.querySelectorAll(`[data-kucuk="${sahne.id}"]`)) oge.style.backgroundImage = `url("${adres}")`;
     return adres;
   }
 
-  // ── Senaryo sekmesi ─────────────────────────────────────────────────────────
+  async function klipAdresi(sahne) {
+    const eski = klipler.get(sahne.id);
+    if (eski?.surum === sahne.videoSurum) return eski.adres;
+    const kayit = await depo.dosyalar.al(depo.videoAnahtari(P.id, sahne.id));
+    if (!kayit) return null;
+    if (eski) { URL.revokeObjectURL(eski.adres); adresler.delete(eski.adres); }
+    const adres = URL.createObjectURL(new Blob([kayit.veri], { type: "video/mp4" }));
+    adresler.add(adres);
+    klipler.set(sahne.id, { adres, surum: sahne.videoSurum });
+    return adres;
+  }
+
+  // ── Önizleme ve oynatma ─────────────────────────────────────────────────────
+  const altyaziKutusu = h("div", { class: "ed-altyazi", hidden: true });
+  let tuvalSirasi = 0;
+  async function cizTuval() {
+    const benim = ++tuvalSirasi;
+    const [en, boy] = P.boyut.split("x").map(Number);
+    tuval.style.aspectRatio = `${en} / ${boy}`;
+    const sahne = P.sahneler[secili];
+    if (!sahne) return tuval.replaceChildren(h("p", { class: "ed-bos" }, "Sahne yok"));
+    let icerik;
+    if (P.hareketli && sahne.videoVar) {
+      const adres = await klipAdresi(sahne);
+      if (adres) icerik = h("video", { src: adres, muted: true, playsinline: true, autoplay: true, loop: true });
+    }
+    if (!icerik && sahne.gorselVar) {
+      const adres = await kucukYukle(sahne);
+      if (adres) icerik = h("img", { src: adres, alt: `Sahne ${secili + 1}` });
+    }
+    if (benim !== tuvalSirasi) return;          // bu arada başka sahne seçildi
+    tuval.replaceChildren(icerik || h("p", { class: "ed-bos" }, "Görsel yok"), altyaziKutusu,
+      h("span", { class: "ed-etiket" }, `Sahne ${secili + 1}`));
+  }
+
+  const oynatma = { calisiyor: false, ses: null, sesAnahtari: "", kare: 0 };
+  function oynatmayiDurdur() {
+    if (!oynatma.calisiyor) return;
+    oynatma.calisiyor = false;
+    cancelAnimationFrame(oynatma.kare);
+    oynatma.ses?.pause();
+    oynatDugmesi.textContent = "▶";
+    altyaziKutusu.hidden = true;
+  }
+
+  async function oynat() {
+    if (oynatma.calisiyor) return oynatmayiDurdur();
+    const z = zamanlama(P);
+    if (!P.sahneler.length || !(z.toplam > 0)) return;
+    let bas = z.sahneler.get(P.sahneler[secili].id).bas;
+    if (bas >= z.toplam - 0.05) bas = 0;
+    let saat;
+    if (z.sesDurumu === "tam") {
+      const anahtar = sesPlani(P).map((p) => p.anahtar).join("|");
+      if (oynatma.sesAnahtari !== anahtar) {
+        const ses = await sesiTopla().catch(() => null);
+        if (!ses) return;
+        const adres = URL.createObjectURL(wavBlob(ses.pcm, ses.hiz));
+        adresler.add(adres);
+        oynatma.ses = new Audio(adres);
+        oynatma.sesAnahtari = anahtar;
+      }
+      oynatma.ses.currentTime = bas;
+      try { await oynatma.ses.play(); } catch { return; }
+      saat = () => oynatma.ses.currentTime;
+    } else {
+      const t0 = performance.now();
+      saat = () => bas + (performance.now() - t0) / 1000;
+    }
+    oynatma.calisiyor = true;
+    oynatDugmesi.textContent = "⏸";
+    const dongu = () => {
+      if (!oynatma.calisiyor) return;
+      const t = saat();
+      if (t >= z.toplam || oynatma.ses?.ended) return oynatmayiDurdur();
+      const sira = P.sahneler.findIndex((s) => { const a = z.sahneler.get(s.id); return t >= a.bas && t < a.bit; });
+      if (sira >= 0 && sira !== secili) sec(sira, true);
+      zamanEtiketi.textContent = `${sureYaz(t)} / ${sureYaz(z.toplam)}`;
+      if (P.altyazi && sira >= 0) {
+        const a = z.sahneler.get(P.sahneler[sira].id);
+        const blok = altyaziBloklari(P.sahneler[sira].metin, a.bas, a.bit).find((b) => t >= b.bas && t < b.bit);
+        altyaziKutusu.textContent = blok?.metin || "";
+        altyaziKutusu.hidden = !blok;
+      }
+      oynatma.kare = requestAnimationFrame(dongu);
+    };
+    dongu();
+  }
+
+  /** Sahneyi seçer; `oynatirken` ise oynatma kesilmez. */
+  function sec(sira, oynatirken = false) {
+    if (!P.sahneler.length) return;
+    secili = Math.max(0, Math.min(P.sahneler.length - 1, sira));
+    if (!oynatirken) oynatmayiDurdur();
+    for (const oge of editor.querySelectorAll("[data-sira]")) oge.classList.toggle("secili", Number(oge.dataset.sira) === secili);
+    zamanCizelgesi.querySelector(".secili")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    cizTuval();
+    cizDenetci();
+    if (!oynatirken) zamaniYaz();
+  }
+
+  function zamaniYaz() {
+    const z = zamanlama(P);
+    const a = P.sahneler[secili] && z.sahneler.get(P.sahneler[secili].id);
+    zamanEtiketi.textContent = `${sureYaz(a?.bas || 0)} / ${sureYaz(z.toplam)}`;
+  }
+
+  // ── Paneller ────────────────────────────────────────────────────────────────
   function alan(etiket, ad, ogeTuru, { degisti, ...ozellik } = {}, cocuklar = []) {
     const oge = h(ogeTuru, { ...ozellik, value: P[ad] ?? "", oninput: () => { P[ad] = oge.value; kaydet(); degisti?.(); } }, cocuklar);
     return h("label", null, etiket, oge);
   }
+  const onay = (etiket, ad, degisti) => {
+    const kutu = h("input", { type: "checkbox", onchange: () => { P[ad] = kutu.checked; kaydet(); degisti?.(); } });
+    kutu.checked = !!P[ad];
+    return h("label", { class: "onay" }, kutu, h("span", null, etiket));
+  };
+  const tercih = (ad) => () => ayarGuncelle({ [ad]: P[ad] });
 
-  function hareketKutusu() {
-    const kutu = h("input", { type: "checkbox", onchange: () => { P.hareketli = kutu.checked; kaydet(); } });
-    kutu.checked = !!P.hareketli;
-    return h("div", null,
-      h("label", { class: "onay" }, kutu, h("span", null, "Görselleri hareketlendir (LTX video)")),
-      h("p", { class: "soluk" }, "Her sahnenin görseli Hugging Face'teki LTX ile birkaç saniyelik klibe çevrilir. "
-        + "Klip başına yaklaşık 40 sn sürer ve Hugging Face GPU kotasından düşer; token Ayarlar'dan girilir."));
+  function sahnelerPaneli() {
+    if (!P.sahneler.length) {
+      return [h("h2", null, "Sahneler"), h("p", { class: "soluk" }, "Henüz sahne yok. Metin bölümünde senaryoyu yazıp sahnelere böl."),
+              h("button", { class: "dugme kucuk", onclick: () => { panel = "metin"; ciz(); } }, "Metne git")];
+    }
+    return [
+      h("h2", null, `Sahneler (${P.sahneler.length})`),
+      h("div", { class: "ed-izgara" }, P.sahneler.map((s, i) => h("button", {
+        class: "ed-kare" + (i === secili ? " secili" : ""), "data-sira": i, "data-kucuk": s.id,
+        style: kucukler.get(s.id) ? `background-image:url("${kucukler.get(s.id).adres}")` : null,
+        "aria-label": `Sahne ${i + 1}`, onclick: () => sec(i),
+      }, h("span", null, String(i + 1)), P.hareketli && s.videoVar ? h("i", null, "▶") : null))),
+      h("button", { class: "dugme kucuk", onclick: () => { P.sahneler.push(yeniSahne()); kaydet(); secili = P.sahneler.length - 1; ciz(); } }, "＋ Sahne ekle"),
+    ];
   }
 
-  function senaryoPaneli() {
+  function metinPaneli() {
     const durum = h("p", { class: "durum", role: "status" });
     const sayac = h("p", { class: "soluk" });
     const sayaciYaz = () => {
       const n = P.senaryo.trim().length;
-      sayac.textContent = n
-        ? `${n} karakter · yaklaşık ${sureYaz(n / 14)} · ${Math.ceil(n / SES_PARCA_SINIRI)} seslendirme isteği`
-        : "Senaryoyu yaz, yapıştır ya da Gemini'ye yazdır.";
+      sayac.textContent = n ? `${n} karakter · yaklaşık ${sureYaz(n / 14)} · ${Math.ceil(n / SES_PARCA_SINIRI)} ses isteği` : "Yaz, yapıştır ya da Gemini'ye yazdır.";
     };
-    const senaryo = h("textarea", { rows: "10", placeholder: "Anlatım metni…", value: P.senaryo, oninput: () => {
-      P.senaryo = senaryo.value; kaydet(); sayaciYaz();
-    } });
-    const yazdir = h("button", { class: "dugme is-dugme", onclick: () => {
-      if (P.senaryo.trim() && !confirm("Mevcut senaryonun üzerine yazılsın mı?")) return;
-      calistir(async () => {
-        adim("Gemini senaryoyu yazıyor…");
-        P.senaryo = await metinAI.senaryoYaz({ anahtar: hesapla("gemini"), konu: P.konu, dil: P.dil, saniye: Number(P.hedefSaniye) || 60 });
-        return "Senaryo yazıldı. Okuyup düzelt, sonra sahnelere böl.";
-      });
-    } }, "Senaryoyu Gemini yazsın");
-    const bol = h("button", { class: "dugme birincil is-dugme", onclick: async () => {
-      if (!P.senaryo.trim()) return durumYaz(durum, "Önce senaryoyu yaz.", "hata");
-      if (P.sahneler.length && !confirm(`Mevcut ${P.sahneler.length} sahne, görselleri ve sesi silinip senaryo yeniden bölünsün mü?`)) return;
-      await depo.dosyalar.onekSil(`${P.id}:`);
-      P.sahneler = sahnelereBol(P.senaryo);
-      P.sesSureleri = {};
-      kaydet(); kaydet.simdi();
-      sekme = "sahneler";
-      ciz();
-    } }, P.sahneler.length ? "Sahnelere yeniden böl" : "Sahnelere böl");
     sayaciYaz();
-    const tercih = (ad) => () => ayarGuncelle({ [ad]: P[ad] });
-    return h("div", { class: "sayfa" },
-      h("section", { class: "kart" },
-        alan("Proje adı", "ad", "input", { type: "text", degisti: () => kabuk.baslik(P.ad, true) }),
-        alan("Konu (Gemini'ye yazdırmak için)", "konu", "textarea", { rows: "2", placeholder: "Örn. Vatoz balıkları bir nehri nasıl ele geçirdi?" }),
-        h("div", { class: "izgara-2" },
-          alan("Dil", "dil", "select", { degisti: tercih("dil") }, secenekler(Object.keys(gemini.DILLER).map((k) => [k, `${k.toUpperCase()} · ${gemini.DILLER[k]}`]), P.dil)),
-          alan("Hedef süre", "hedefSaniye", "select", {}, secenekler(SURELER.map((s) => [String(s), s < 60 ? `${s} sn` : `${s / 60} dk`]), String(P.hedefSaniye)))),
-        h("div", { class: "satir" }, yazdir)),
-      h("section", { class: "kart" },
-        h("h2", null, "Senaryo"),
-        h("label", null, "Anlatım metni", senaryo),
-        sayac,
-        h("div", { class: "satir" }, bol),
-        durum),
-      h("section", { class: "kart" },
-        h("h2", null, "Ses ve görsel ayarları"),
-        h("div", { class: "izgara-2" },
-          alan("Ses", "ses", "select", { degisti: tercih("ses") }, secenekler(gemini.SESLER.map((s) => [s, s]), P.ses)),
-          alan("Biçim", "boyut", "select", { degisti: tercih("boyut") }, secenekler(BOYUTLAR, P.boyut))),
-        alan("Seslendirme modeli", "model", "select", { degisti: tercih("model") }, secenekler(gemini.MODELLER.map((m) => [m, m]), P.model)),
-        alan("Anlatım tarzı", "stil", "textarea", { rows: "2" }),
-        alan("Görsel modeli", "gorselModel", "select", { degisti: tercih("gorselModel") }, secenekler(cloudflare.MODELLER.map((m) => [m.kimlik, m.ad]), P.gorselModel)),
-        alan("Görsel stili (her prompt'a eklenir)", "gorselStili", "textarea", { rows: "3" }),
-        hareketKutusu(),
-        h("p", { class: "soluk" }, "Ses, model ya da anlatım tarzı değişirse seslendirme yeniden üretilir.")));
+    return [
+      h("h2", null, "Metin"),
+      alan("Proje adı", "ad", "input", { type: "text", degisti: () => { adEtiketi.textContent = P.ad; kabuk.baslik(P.ad, true); } }),
+      yaziAlani("Konu (Gemini'ye yazdırmak için)", P.konu, { yerTutucu: "Örn. Vatoz balıkları bir nehri nasıl ele geçirdi?", degisti: (v) => { P.konu = v; kaydet(); } }),
+      h("div", { class: "izgara-2" },
+        alan("Dil", "dil", "select", { degisti: tercih("dil") }, secenekler(Object.keys(gemini.DILLER).map((k) => [k, `${k.toUpperCase()} · ${gemini.DILLER[k]}`]), P.dil)),
+        alan("Hedef süre", "hedefSaniye", "select", {}, secenekler(SURELER.map((s) => [String(s), s < 60 ? `${s} sn` : `${s / 60} dk`]), String(P.hedefSaniye)))),
+      h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => {
+        if (P.senaryo.trim() && !confirm("Mevcut senaryonun üzerine yazılsın mı?")) return;
+        calistir(async () => {
+          adim("Gemini senaryoyu yazıyor…");
+          P.senaryo = await metinAI.senaryoYaz({ anahtar: hesapla("gemini"), konu: P.konu, dil: P.dil, saniye: Number(P.hedefSaniye) || 60 });
+          return "Senaryo yazıldı. Okuyup düzelt, sonra sahnelere böl.";
+        });
+      } }, "Senaryoyu Gemini yazsın"),
+      yaziAlani("Senaryo (anlatım metni)", P.senaryo, { yerTutucu: "Anlatım metni…", satir: 4, veri: { "data-senaryo": "" },
+                                                       degisti: (v) => { P.senaryo = v; kaydet(); sayaciYaz(); } }),
+      sayac,
+      h("button", { class: "dugme birincil kucuk is-dugme", disabled: is.calisiyor, onclick: async () => {
+        if (!P.senaryo.trim()) return durumYaz(durum, "Önce senaryoyu yaz.", "hata");
+        if (P.sahneler.length && !confirm(`Mevcut ${P.sahneler.length} sahne, görselleri ve sesi silinip senaryo yeniden bölünsün mü?`)) return;
+        oynatmayiDurdur();
+        await depo.dosyalar.onekSil(`${P.id}:`);
+        P.sahneler = sahnelereBol(P.senaryo);
+        P.sesSureleri = {};
+        kaydet(); kaydet.simdi();
+        panel = "sahneler";
+        secili = 0;
+        ciz();
+      } }, P.sahneler.length ? "Sahnelere yeniden böl" : "Sahnelere böl"),
+      durum,
+    ];
   }
 
-  // ── Sahneler sekmesi ────────────────────────────────────────────────────────
-  function sesOzeti() {
+  function ayarlarPaneli() {
+    return [
+      h("h2", null, "Ayarlar"),
+      h("div", { class: "izgara-2" },
+        alan("Ses", "ses", "select", { degisti: tercih("ses") }, secenekler(gemini.SESLER.map((s) => [s, s]), P.ses)),
+        alan("Biçim", "boyut", "select", { degisti: () => { tercih("boyut")(); cizTuval(); } }, secenekler(BOYUTLAR, P.boyut))),
+      alan("Seslendirme modeli", "model", "select", { degisti: tercih("model") }, secenekler(gemini.MODELLER.map((m) => [m, m]), P.model)),
+      yaziAlani("Anlatım tarzı", P.stil, { degisti: (v) => { P.stil = v; kaydet(); } }),
+      alan("Görsel modeli", "gorselModel", "select", { degisti: tercih("gorselModel") }, secenekler(cloudflare.MODELLER.map((m) => [m.kimlik, m.ad]), P.gorselModel)),
+      yaziAlani("Görsel stili (her tarife eklenir)", P.gorselStili, { degisti: (v) => { P.gorselStili = v; kaydet(); } }),
+      onay("Görselleri hareketlendir (LTX)", "hareketli", ciz),
+      h("p", { class: "soluk" }, "Her görsel birkaç saniyelik klibe çevrilir; klip başına yaklaşık 40 sn sürer ve Hugging Face kotasından düşer."),
+      onay("Altyazıyı videoya yaz", "altyazi"),
+      h("p", { class: "soluk" }, "Ses, model ya da anlatım tarzı değişirse seslendirme yeniden üretilir."),
+    ];
+  }
+
+  // ── Sağ panel: seçili sahne ─────────────────────────────────────────────────
+  function cizDenetci() {
+    const sahne = P.sahneler[secili];
+    if (!sahne) return denetci.replaceChildren(h("h2", null, "Sahne"), h("p", { class: "soluk" }, "Sahne seçilmedi."));
+    const no = secili + 1;
     const z = zamanlama(P);
-    if (!z.parcaSayisi) return "Ses: metin yok";
-    if (z.sesDurumu === "tam") return `Ses hazır · ${sureYaz(z.toplam)}`;
-    if (z.sesDurumu === "eksik") return `Ses eksik: ${z.eksik} / ${z.parcaSayisi} parça üretilecek`;
-    return `Ses yok · ${z.parcaSayisi} istek · tahmini ${sureYaz(z.toplam)}`;
-  }
-
-  function sahneKarti(sahne, no, z) {
-    const zaman = z.sahneler.get(sahne.id);
-    const kucuk = kucukler.get(sahne.id);
-    const resim = h("img", { "data-kucuk": sahne.id, alt: `Sahne ${no} görseli`, loading: "lazy",
-                             src: kucuk?.adres, hidden: !kucuk });
+    const a = z.sahneler.get(sahne.id);
     const dosya = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async () => {
       const secilen = dosya.files[0];
       dosya.value = "";
       if (!secilen) return;
-      try {
-        await gorselKaydet(sahne, await depoyaHazirla(secilen));
-      } catch {
-        alert("Bu görsel okunamadı.");
-      }
+      try { await gorselKaydet(sahne, await depoyaHazirla(secilen)); cizZaman(); cizPanel(); } catch { alert("Bu görsel okunamadı."); }
     } });
-    return h("article", { class: "sahne" },
-      h("div", { class: "sahne-ust" },
-        h("div", { class: "kucuk" + (kucuk ? "" : " bos") }, resim),
-        h("div", { class: "sahne-bilgi" },
-          h("strong", null, `Sahne ${no}`),
-          h("span", { class: "soluk" }, zaman && zaman.bit > zaman.bas ? `${sureYaz(zaman.bas)} – ${sureYaz(zaman.bit)}${z.sesDurumu === "tam" ? "" : " (tahmini)"}` : "")),
-        h("button", { class: "sahne-sil", "aria-label": `Sahne ${no} sil`, onclick: async () => {
+    const tekIs = (etiket, isi, sinif = "dugme kucuk is-dugme") => h("button", { class: sinif, disabled: is.calisiyor, onclick: () => calistir(isi) }, etiket);
+    denetci.replaceChildren(
+      h("div", { class: "ed-denetci-ust" },
+        h("h2", null, `Sahne ${no}`),
+        h("span", { class: "soluk" }, a && a.bit > a.bas ? `${sureYaz(a.bas)} – ${sureYaz(a.bit)}${z.sesDurumu === "tam" ? "" : " (tahmini)"}` : ""),
+        h("span", { class: "bosluk" }),
+        h("button", { class: "ed-ikon", "aria-label": `Sahne ${no} sil`, onclick: async () => {
           if (!confirm(`Sahne ${no} silinsin mi?`)) return;
           await depo.dosyalar.sil(depo.gorselAnahtari(P.id, sahne.id));
           await depo.dosyalar.sil(depo.videoAnahtari(P.id, sahne.id));
           P.sahneler = P.sahneler.filter((s) => s !== sahne);
+          secili = Math.max(0, Math.min(secili, P.sahneler.length - 1));
           kaydet();
           ciz();
-        } }, "×")),
-      h("label", null, "Anlatım",
-        h("textarea", { rows: "3", value: sahne.metin, oninput: (o) => {
-          sahne.metin = o.target.value;
-          kaydet();
-          sesSatiri.textContent = sesOzeti();
-          const dinle = govde.querySelector("[data-dinle]");
-          if (dinle) dinle.hidden = zamanlama(P).sesDurumu !== "tam";
-        } })),
-      h("label", null, "Görsel tarifi (İngilizce)",
-        h("textarea", { rows: "3", "data-prompt": sahne.id, value: sahne.prompt || "", placeholder: "Boş bırakırsan anlatımdan üretilir.",
-                        oninput: (o) => { sahne.prompt = o.target.value; kaydet(); } })),
-      P.hareketli ? h("label", null, "Hareket tarifi (İngilizce)",
-        h("textarea", { rows: "2", "data-hareket": sahne.id, value: sahne.hareket || "", placeholder: ltx.VARSAYILAN_HAREKET,
-                        oninput: (o) => { sahne.hareket = o.target.value; kaydet(); } })) : null,
-      P.hareketli && sahne.gorselVar ? h("div", { class: "satir" },
-        h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
+        } }, "🗑")),
+      yaziAlani("Anlatım", sahne.metin, { satir: 3, veri: { "data-anlatim": "" }, degisti: (v) => { sahne.metin = v; kaydet(); cizZaman(); cizUst(); zamaniYaz(); } }),
+      yaziAlani("Görsel tarifi (İngilizce)", sahne.prompt, { satir: 3, yerTutucu: "Boş bırakırsan anlatımdan üretilir.", veri: { "data-prompt": "" },
+                                                           degisti: (v) => { sahne.prompt = v; kaydet(); } }),
+      P.hareketli ? yaziAlani("Hareket tarifi (İngilizce)", sahne.hareket, { yerTutucu: ltx.VARSAYILAN_HAREKET, veri: { "data-hareket": "" },
+                                                                          degisti: (v) => { sahne.hareket = v; kaydet(); } }) : null,
+      h("div", { class: "satir" },
+        tekIs(sahne.gorselVar ? "Görseli yeniden üret" : "Görsel üret", async () => {
+          adim(`Sahne ${no} görseli üretiliyor…`);
+          await gorselUret(sahne);
+          return `Sahne ${no} görseli hazır.`;
+        }),
+        h("label", { class: "dugme kucuk dosya" }, "Galeriden", dosya),
+        tekIs("Tarif yaz", async () => {
+          if (!sahne.metin.trim()) throw new Error("Bu sahnenin anlatımı boş.");
+          await promptAdimi([sahne]);
+          return `Sahne ${no} için görsel tarifi yazıldı.`;
+        }),
+        P.hareketli && sahne.gorselVar ? tekIs(sahne.videoVar ? "Klibi yeniden üret" : "Klip üret", async () => {
           if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: API sayfasından ekle.");
           adim(`Sahne ${no} klibi üretiliyor…`);
           await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
           return `Sahne ${no} klibi hazır.`;
-        }) }, sahne.videoVar ? "Klibi yeniden üret" : "Klip üret"),
-        sahne.videoVar ? h("button", { class: "dugme kucuk", onclick: async (o) => {
-          const kart = o.target.closest(".sahne");
-          const eski = kart.querySelector("video");
-          if (eski) return eski.remove();
-          const kayit = await depo.dosyalar.al(depo.videoAnahtari(P.id, sahne.id));
-          if (!kayit) return;
-          const adres = URL.createObjectURL(new Blob([kayit.veri], { type: "video/mp4" }));
-          adresler.add(adres);
-          kart.append(h("video", { src: adres, controls: true, playsinline: true, muted: true, autoplay: true, loop: true }));
-        } }, "Klibi izle") : null) : null,
-      h("div", { class: "satir" },
-        h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-          adim(`Sahne ${no} görseli üretiliyor…`);
-          await gorselUret(sahne);
-          return `Sahne ${no} görseli hazır.`;
-        }) }, sahne.gorselVar ? "Yeniden üret" : "Görsel üret"),
-        h("label", { class: "dugme kucuk dosya" }, "Galeriden", dosya),
-        h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-          if (!sahne.metin.trim()) throw new Error("Bu sahnenin anlatımı boş.");
-          await promptAdimi([sahne]);
-          return `Sahne ${no} için prompt yazıldı.`;
-        }) }, "Prompt yaz")));
+        }) : null));
   }
 
-  let sesSatiri = h("span");
-  function sahnePaneli() {
-    if (!P.sahneler.length) {
-      return h("div", { class: "sayfa" }, h("section", { class: "kart" },
-        h("p", { class: "soluk" }, "Henüz sahne yok. Senaryo sekmesinde metni yazıp “Sahnelere böl”e bas."),
-        h("div", { class: "satir" }, h("button", { class: "dugme", onclick: () => { sekme = "senaryo"; ciz(); } }, "Senaryoya git"))));
-    }
-    const z = zamanlama(P);
-    sesSatiri = h("span", null, sesOzeti());
-    const oynatici = h("audio", { controls: true, hidden: true });
-    const dinle = h("button", { class: "dugme kucuk", "data-dinle": "", onclick: async () => {
-      const ses = await sesiTopla().catch(() => null);
-      if (!ses) return alert("Ses henüz hazır değil.");
-      const adres = URL.createObjectURL(wavBlob(ses.pcm, ses.hiz));
-      adresler.add(adres);
-      oynatici.src = adres;
-      oynatici.hidden = false;
-      oynatici.play().catch(() => {});
-    } }, "Dinle");
-    const gorselli = P.sahneler.filter((s) => s.gorselVar).length;
-    for (const sahne of P.sahneler) if (sahne.gorselVar) kucukYukle(sahne).catch(() => {});
-    return h("div", { class: "sayfa" },
-      h("section", { class: "kart" },
-        h("div", { class: "ozet-satir" }, h("span", null, `${P.sahneler.length} sahne · ${gorselli} görsel`
-          + (P.hareketli ? ` · ${P.sahneler.filter((s) => s.videoVar).length} klip` : "")), sesSatiri,
-          z.sesDurumu === "tam" ? dinle : null),
-        oynatici,
-        h("div", { class: "satir" },
-          h("button", { class: "dugme birincil is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "Eksikleri üret"),
-          h("button", { class: "dugme is-dugme", disabled: is.calisiyor, onclick: () => calistir(async () => {
-            if (!havuz.hesapVar("gemini")) throw new Error("Gemini hesabı yok: API sayfasından kasaya bağlanıp ekle.");
-            const n = await sesAdimi();
-            return n ? `${n} ses parçası üretildi.` : "Ses zaten hazır.";
-          }) }, "Yalnızca ses")),
-        h("p", { class: "soluk" }, `“Eksikleri üret” sırayla eksik prompt'ları, sesi${P.hareketli ? ", görselleri ve klipleri" : " ve görselleri"} üretir. Yarıda kalırsa kaldığı yerden sürer.`)),
-      P.sahneler.map((s, i) => sahneKarti(s, i + 1, z)),
-      h("div", { class: "satir" },
-        h("button", { class: "dugme", onclick: () => { P.sahneler.push(yeniSahne()); kaydet(); ciz(); } }, "＋ Sahne ekle")));
-  }
-
-  // ── Video sekmesi ───────────────────────────────────────────────────────────
+  // ── Video (dışa aktarma) ────────────────────────────────────────────────────
   async function sesiTopla() {
     const plan = sesPlani(P);
     const parcalar = [];
     let hiz = null;
     for (const p of plan) {
       const kayit = await depo.dosyalar.al(depo.sesAnahtari(P.id, p.anahtar));
-      if (!kayit) throw new Error("Ses dosyası eksik. Sahneler sekmesinde sesi yeniden üret.");
+      if (!kayit) throw new Error("Ses dosyası eksik: “Eksikleri üret”e bas.");
       if (hiz !== null && kayit.hiz !== hiz) throw new Error("Ses parçalarının örnekleme hızları farklı; sesi yeniden üret.");
       hiz = kayit.hiz;
       parcalar.push(new Int16Array(kayit.veri));
@@ -476,27 +593,37 @@ export async function projeGorunumu(kok, id, kabuk) {
     return { dilimler, altyazilar };
   }
 
+  function videoyuGoster() {
+    if (!sonVideo) return;
+    const kaplama = h("div", { class: "video-kaplama" },
+      h("video", { src: sonVideo.adres, controls: true, playsinline: true, autoplay: true }),
+      h("div", { class: "satir" },
+        h("button", { class: "dugme birincil", onclick: videoKaydet }, "Kaydet / Paylaş"),
+        h("button", { class: "dugme", onclick: () => kaplama.remove() }, "Kapat")));
+    document.body.append(kaplama);
+  }
+
   function videoPaneli() {
     const z = zamanlama(P);
     const gorselli = P.sahneler.filter((s) => s.gorselVar).length;
     const durum = h("p", { class: "durum", role: "status" });
     const cubuk = h("progress", { max: "1", value: "0", hidden: true });
-    const oynatici = h("video", { controls: true, playsinline: true, hidden: !sonVideo, src: sonVideo?.adres });
     const yontem = h("select", null, secenekler([["oto", "Otomatik"], ["hizli", "Hızlı"], ["gercek", "Gerçek zamanlı"]], "oto"));
-    const iptal = h("button", { class: "dugme", hidden: true, onclick: () => { is.iptal = true; } }, "İptal");
-    const kaydetDugmesi = h("button", { class: "dugme birincil", hidden: !sonVideo, onclick: videoKaydet }, "Kaydet / Paylaş");
+    const iptal = h("button", { class: "dugme kucuk", hidden: true, onclick: () => { is.iptal = true; } }, "İptal");
+    const izle = h("button", { class: "dugme kucuk", hidden: !sonVideo, onclick: videoyuGoster }, "İzle");
+    const paylas = h("button", { class: "dugme kucuk", hidden: !sonVideo, onclick: videoKaydet }, "Kaydet / Paylaş");
     const hazirlik = !P.sahneler.length ? "Önce sahneleri oluştur."
       : !gorselli ? "En az bir sahnenin görseli olmalı."
-      : z.sesDurumu === "eksik" ? "Ses eksik: Sahneler sekmesinde “Eksikleri üret”e bas (ya da sessiz video için metni değiştirme)." : "";
-    const olustur = h("button", { class: "dugme birincil is-dugme", disabled: is.calisiyor || !!hazirlik, onclick: async () => {
+      : z.sesDurumu === "eksik" ? "Ses eksik: “Eksikleri üret”e bas." : "";
+    const olustur = h("button", { class: "dugme birincil kucuk is-dugme", disabled: is.calisiyor || !!hazirlik, onclick: async () => {
       if (is.calisiyor) return;
+      oynatmayiDurdur();
       const baglam = sesBaglami();        // iOS: dokunma olayının içinde açılmalı
       is.calisiyor = true;
       is.iptal = false;
-      olustur.disabled = true;
+      kilitle(true);
       cubuk.hidden = false;
       iptal.hidden = false;
-      kaydetDugmesi.hidden = true;
       try {
         await ekranAcik(async () => {
           const [en, boy] = P.boyut.split("x").map(Number);
@@ -517,9 +644,7 @@ export async function projeGorunumu(kok, id, kabuk) {
           if (sonVideo) { URL.revokeObjectURL(sonVideo.adres); adresler.delete(sonVideo.adres); }
           sonVideo = { ...sonuc, adres: URL.createObjectURL(sonuc.blob) };
           adresler.add(sonVideo.adres);
-          oynatici.src = sonVideo.adres;
-          oynatici.hidden = false;
-          kaydetDugmesi.hidden = false;
+          izle.hidden = paylas.hidden = false;
           const ozet = `${en}×${boy}, ${sonuc.sure.toFixed(1)} sn video, ${sonuc.gecen.toFixed(1)} sn'de `
             + `(${(sonuc.sure / sonuc.gecen).toFixed(1)}× hız), ${(sonuc.blob.size / 1e6).toFixed(1)} MB, yöntem: ${sonuc.yontem}`;
           try { sessionStorage.setItem("son-aktarim", "Son dışa aktarma: " + ozet); } catch { /* özel sekme */ }
@@ -530,26 +655,23 @@ export async function projeGorunumu(kok, id, kabuk) {
         try { sessionStorage.setItem("son-aktarim", "Son dışa aktarma HATA: " + (hata.message || hata)); } catch { /* özel sekme */ }
       } finally {
         is.calisiyor = false;
-        olustur.disabled = false;
+        kilitle(false);
         cubuk.hidden = true;
         iptal.hidden = true;
       }
     } }, "Videoyu oluştur");
-    const altyazi = h("input", { type: "checkbox", onchange: () => { P.altyazi = altyazi.checked; kaydet(); } });
-    altyazi.checked = !!P.altyazi;
-    return h("div", { class: "sayfa" }, h("section", { class: "kart" },
+    return [
+      h("h2", null, "Video"),
       h("p", { class: "soluk" }, P.sahneler.length
         ? `${P.sahneler.length} sahne · ${gorselli} görsel · ${sureYaz(z.toplam)}`
           + (z.sesDurumu === "tam" ? " · sesli" : z.sesDurumu === "yok" ? " · sessiz (süre tahmini)" : "")
         : "Proje boş."),
-      h("div", { class: "izgara-2" },
-        alan("Biçim", "boyut", "select", {}, secenekler(BOYUTLAR, P.boyut)),
-        h("label", null, "Yöntem", yontem)),
-      h("label", { class: "onay" }, altyazi, h("span", null, "Altyazıyı videoya yaz (yaklaşık zamanlama)")),
+      h("label", null, "Yöntem", yontem),
       hazirlik ? h("p", { class: "durum hata" }, hazirlik) : null,
       h("div", { class: "satir" }, olustur, iptal),
-      cubuk, durum, oynatici,
-      h("div", { class: "satir" }, kaydetDugmesi)));
+      cubuk, durum,
+      h("div", { class: "satir" }, izle, paylas),
+    ];
   }
 
   async function videoKaydet() {
@@ -564,28 +686,63 @@ export async function projeGorunumu(kok, id, kabuk) {
         if (hata.name === "AbortError") return;      // kullanıcı paylaşımı kapattı
       }
     }
-    const bag = h("a", { href: sonVideo.adres, download: ad });
-    bag.click();
+    h("a", { href: sonVideo.adres, download: ad }).click();
   }
 
-  // ── İskelet ─────────────────────────────────────────────────────────────────
-  const SEKMELER = [["senaryo", "Senaryo"], ["sahneler", "Sahneler"], ["video", "Video"]];
-  const sekmeCubugu = h("div", { class: "sekmeler", role: "tablist" });
-  const govde = h("div");
-  function ciz() {
-    sekmeCubugu.replaceChildren(...SEKMELER.map(([ad, etiket]) => h("button", {
-      role: "tab", "aria-selected": String(sekme === ad), class: sekme === ad ? "secili" : "",
-      onclick: () => { if (sekme !== ad) { kaydet.simdi(); sekme = ad; ciz(); window.scrollTo(0, 0); } },
-    }, etiket)));
-    govde.replaceChildren(sekme === "senaryo" ? senaryoPaneli() : sekme === "sahneler" ? sahnePaneli() : videoPaneli());
+  // ── Çizim ───────────────────────────────────────────────────────────────────
+  function cizUst() {
+    const z = zamanlama(P);
+    const gorselli = P.sahneler.filter((s) => s.gorselVar).length;
+    const ses = !z.parcaSayisi ? "" : z.sesDurumu === "tam" ? "ses ✓" : z.sesDurumu === "eksik" ? "ses eksik" : "ses yok";
+    ustCubuk.querySelector(".ed-ozet").textContent = P.sahneler.length
+      ? [`${P.sahneler.length} sahne`, `${gorselli} görsel`, P.hareketli ? `${P.sahneler.filter((s) => s.videoVar).length} klip` : "", ses, sureYaz(z.toplam)].filter(Boolean).join(" · ")
+      : "";
+    uretDugmesi.disabled = is.calisiyor;
   }
-  kok.append(sekmeCubugu, isAlani, govde);
+
+  function cizPanel() {
+    ray.replaceChildren(...RAY.map(([ad, ikon, etiket]) => h("button", {
+      class: "ed-ray-oge" + (panel === ad ? " secili" : ""), "aria-pressed": String(panel === ad),
+      onclick: () => { if (panel !== ad) { kaydet.simdi(); panel = ad; cizPanel(); } },
+    }, h("span", { "aria-hidden": "true" }, ikon), etiket)));
+    panelKutusu.replaceChildren(...(panel === "sahneler" ? sahnelerPaneli() : panel === "metin" ? metinPaneli()
+      : panel === "ayarlar" ? ayarlarPaneli() : videoPaneli()).flat().filter(Boolean));
+  }
+
+  function cizZaman() {
+    const z = zamanlama(P);
+    if (!P.sahneler.length) return zamanCizelgesi.replaceChildren(h("p", { class: "soluk" }, "Zaman çizelgesi: sahneler burada görünür."));
+    zamanCizelgesi.replaceChildren(...P.sahneler.map((s, i) => {
+      const a = z.sahneler.get(s.id);
+      return h("button", {
+        class: "ed-zc-oge" + (i === secili ? " secili" : "") + (s.gorselVar ? "" : " bos"), "data-sira": i, "data-kucuk": s.id,
+        style: `width:${Math.max(44, Math.round((a.bit - a.bas) * 14))}px;` + (kucukler.get(s.id) ? `background-image:url("${kucukler.get(s.id).adres}")` : ""),
+        "aria-label": `Sahne ${i + 1}`, onclick: () => sec(i),
+      }, h("span", null, String(i + 1)));
+    }));
+  }
+
+  function ciz() {
+    secili = Math.max(0, Math.min(secili, P.sahneler.length - 1));
+    cizUst();
+    cizPanel();
+    cizZaman();
+    cizTuval();
+    cizDenetci();
+    zamaniYaz();
+    for (const sahne of P.sahneler) if (sahne.gorselVar && !kucukler.has(sahne.id)) kucukYukle(sahne).catch(() => {});
+  }
   ciz();
 
   return () => {
     is.iptal = true;
+    oynatmayiDurdur();
     document.removeEventListener("visibilitychange", gizlenince);
     kaydet.simdi();
+    document.body.classList.remove("editor-acik");
+    document.querySelectorAll(".yazi-kaplama, .video-kaplama").forEach((k) => k.remove());
+    try { screen.orientation?.unlock?.(); } catch { /* desteklenmiyor */ }
+    if (tamEkranBizden && document.fullscreenElement) document.exitFullscreen().catch(() => {});
     adresler.forEach((a) => URL.revokeObjectURL(a));
   };
 }
