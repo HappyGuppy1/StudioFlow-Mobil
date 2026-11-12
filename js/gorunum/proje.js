@@ -326,15 +326,22 @@ export async function projeGorunumu(kok, id, kabuk) {
     const sahne = P.sahneler[secili];
     if (!sahne) return tuval.replaceChildren(h("p", { class: "ed-bos" }, "Sahne yok"));
     let icerik;
+    const gorselAdresi = sahne.gorselVar ? await kucukYukle(sahne) : null;
     if (P.hareketli && sahne.videoVar) {
       const adres = await klipAdresi(sahne);
-      if (adres) icerik = h("video", { src: adres, muted: true, playsinline: true, autoplay: true, loop: true });
+      if (adres) {
+        // LTX klibe kendi müziğini ekler: önizleme klibi her zaman sessizdir. `muted` özniteliği sonradan
+        // oluşturulan öğede sesi kapatmaz; özelliğin kendisi atanır.
+        icerik = h("video", { src: adres, playsinline: true, preload: "auto", poster: gorselAdresi });
+        icerik.muted = true;
+        icerik.defaultMuted = true;
+        icerik.volume = 0;
+        icerik.loop = true;
+      }
     }
-    if (!icerik && sahne.gorselVar) {
-      const adres = await kucukYukle(sahne);
-      if (adres) icerik = h("img", { src: adres, alt: `Sahne ${secili + 1}` });
-    }
+    if (!icerik && gorselAdresi) icerik = h("img", { src: gorselAdresi, alt: `Sahne ${secili + 1}` });
     if (benim !== tuvalSirasi) return;          // bu arada başka sahne seçildi
+    if (icerik?.tagName === "VIDEO" && oynatma.calisiyor) icerik.play().catch(() => {});      // klip yalnızca oynatırken oynar
     tuval.replaceChildren(icerik || h("p", { class: "ed-bos" }, "Görsel yok"), altyaziKutusu,
       h("span", { class: "ed-etiket" }, `Sahne ${secili + 1}`));
   }
@@ -345,6 +352,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     oynatma.calisiyor = false;
     cancelAnimationFrame(oynatma.kare);
     oynatma.ses?.pause();
+    tuval.querySelector("video")?.pause();
     oynatDugmesi.textContent = "▶";
     altyaziKutusu.hidden = true;
   }
@@ -360,25 +368,33 @@ export async function projeGorunumu(kok, id, kabuk) {
       const anahtar = sesPlani(P).map((p) => p.anahtar).join("|");
       if (oynatma.sesAnahtari !== anahtar) {
         const ses = await sesiTopla().catch(() => null);
-        if (!ses) return;
-        const adres = URL.createObjectURL(wavBlob(ses.pcm, ses.hiz));
-        adresler.add(adres);
-        oynatma.ses = new Audio(adres);
-        oynatma.sesAnahtari = anahtar;
+        if (ses) {
+          const adres = URL.createObjectURL(wavBlob(ses.pcm, ses.hiz));
+          adresler.add(adres);
+          oynatma.ses = new Audio(adres);
+          oynatma.sesAnahtari = anahtar;
+        }
       }
-      oynatma.ses.currentTime = bas;
-      try { await oynatma.ses.play(); } catch { return; }
-      saat = () => oynatma.ses.currentTime;
-    } else {
+      if (oynatma.sesAnahtari === anahtar) {
+        oynatma.ses.currentTime = bas;
+        try {
+          await oynatma.ses.play();
+          saat = () => oynatma.ses.currentTime;
+        } catch { /* tarayıcı sesi başlatmadı: aşağıda sessiz saatle oynatılır */ }
+      }
+    }
+    const sesli = !!saat;
+    if (!saat) {
       const t0 = performance.now();
       saat = () => bas + (performance.now() - t0) / 1000;
     }
     oynatma.calisiyor = true;
     oynatDugmesi.textContent = "⏸";
+    tuval.querySelector("video")?.play().catch(() => {});
     const dongu = () => {
       if (!oynatma.calisiyor) return;
       const t = saat();
-      if (t >= z.toplam || oynatma.ses?.ended) return oynatmayiDurdur();
+      if (t >= z.toplam || (sesli && oynatma.ses.ended)) return oynatmayiDurdur();
       const sira = P.sahneler.findIndex((s) => { const a = z.sahneler.get(s.id); return t >= a.bas && t < a.bit; });
       if (sira >= 0 && sira !== secili) sec(sira, true);
       zamanEtiketi.textContent = `${sureYaz(t)} / ${sureYaz(z.toplam)}`;

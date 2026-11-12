@@ -1,7 +1,7 @@
 // Çevrimdışı açılış: uygulama dosyaları önbelleğe alınır.
 // Strateji "önce ağ": bağlantı varsa her zaman güncel dosya gelir, yoksa önbellekteki açılır.
 // Yalnızca aynı kökenden GET istekleri ele alınır; API çağrılarına (Gemini, aracı) dokunulmaz.
-const ONBELLEK = "studioflow-mobil-v9";
+const ONBELLEK = "studioflow-mobil-v10";
 const DOSYALAR = [
   "./", "index.html", "app.css", "manifest.webmanifest",
   "js/app.js", "js/ag.js", "js/dom.js", "js/ayar.js", "js/hesap.js", "js/depo.js", "js/sahne.js", "js/metin.js", "js/gorsel.js",
