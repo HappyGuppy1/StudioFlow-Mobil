@@ -275,3 +275,10 @@ body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
 .editor input[type=range] { width: 100%; accent-color: var(--vurgu); }
 .ed-altyazi[data-konum="orta"] { bottom: auto; top: 46%; }
 .ed-altyazi[data-konum="ust"] { bottom: auto; top: 20%; }
+
+/* Düzenleyici satırları adlarıyla yerleşir: iş satırı gizliyken öbür bölümler kaymasın. */
+.editor { height: 100dvh; grid-template-rows: 42px auto minmax(0, 1fr) auto; }
+.editor > .ed-ust { grid-row: 1; }
+.editor > .ed-is { grid-row: 2; }
+.editor > .ed-calisma { grid-row: 3; min-height: 0; overflow: hidden; }
+.editor > .ed-zc { grid-row: 4; }
