@@ -57,4 +57,5 @@ export function kaliciIste() {
 export const gorselAnahtari = (projeId, sahneId) => `${projeId}:gorsel:${sahneId}`;
 export const sesAnahtari = (projeId, parca) => `${projeId}:ses:${parca}`;
 export const videoAnahtari = (projeId, sahneId) => `${projeId}:video:${sahneId}`;
-export const muzikAnahtari = (projeId) => `${projeId}:muzik`;
+// İlk müzik (`ilk`) eski sürümlerdeki tek müzik anahtarında durur; sonrakiler kendi kimlikleriyle.
+export const muzikAnahtari = (projeId, muzikId = "ilk") => (muzikId === "ilk" ? `${projeId}:muzik` : `${projeId}:muzik:${muzikId}`);

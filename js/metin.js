@@ -46,8 +46,10 @@ async function uret(anahtar, sistem, kullanici, json) {
       const bitis = veri?.candidates?.[0]?.finishReason || "";
       const engel = veri?.promptFeedback?.blockReason || (/SAFETY|PROHIBITED|BLOCK/.test(bitis) ? bitis : "");
       if (engel) {
-        throw new Error(`Gemini içerik filtresi bu isteği reddetti (${engel}). Bu bir kota ya da bağlantı hatası değil: `
+        const hata = new Error(`Gemini içerik filtresi bu isteği reddetti (${engel}). Bu bir kota ya da bağlantı hatası değil: `
           + "metindeki bir ifade Google'ın filtresine takıldı. Metni değiştirip yeniden dene.");
+        hata.tur = "filtre";
+        throw hata;
       }
       son = "Gemini boş yanıt döndürdü.";
       continue;
@@ -147,6 +149,42 @@ export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, on
         yazilan.push({ index: s.index, prompt });
         bildir?.(s, prompt, String(kayit?.video_prompt || "").trim());
       }
+    });
+  }
+}
+
+const HAREKET_SISTEM =
+  "You write motion prompts for an image-to-video model. For each segment you receive the narration and the "
+  + "description of its still frame. Write video_prompt in English, 15 to 35 words: how that exact frame comes "
+  + "alive over about five seconds. Include one camera move (slow push in, pull back, pan, tilt, orbit or a "
+  + "locked-off shot), the natural action of the main subject, and the ambient motion around it (wind, water, "
+  + "light, cloth, leaves).\n"
+  + "- Describe only motion that is visible in the frame. Everything already in the frame stays as it is.\n"
+  + "- Keep the pace calm and continuous; one action per clip.\n"
+  + "- Write only what moves and how. Never write what is absent.\n"
+  + "Reply ONLY with a JSON array. Every element must be exactly: "
+  + '{"index": <int>, "video_prompt": "<string>"}.';
+
+/**
+ * Sahnelerin hareket tariflerini (görselden videoya) yazar. `sahneler`: `[{ index, metin, prompt }]`;
+ * `bildir(sahne, hareket)` her grup bittikçe çağrılır. Görsel tarifinden ayrı bir istektir: biri
+ * reddedilirse öbürü etkilenmez.
+ */
+export async function hareketleriYaz({ anahtar, sahneler, bildir, iptal }) {
+  for (let i = 0; i < sahneler.length; i += 12) {
+    if (iptal?.()) throw new Error("Durduruldu.");
+    const grup = sahneler.slice(i, i + 12);
+    const bloklar = [`There are ${grup.length} segments; write a video_prompt for each one.`, ""];
+    for (const s of grup) {
+      bloklar.push(`Segment ${s.index} narration: ${s.metin.replace(/\s+/g, " ").trim()}`,
+                   `Segment ${s.index} still frame: ${(s.prompt || "").replace(/\s+/g, " ").trim()}`, "");
+    }
+    const kayitlar = jsonCoz(await uret(anahtar, HAREKET_SISTEM, bloklar.join("\n"), true));
+    if (!Array.isArray(kayitlar)) throw new Error("Gemini hareket tariflerini beklenen biçimde döndürmedi. Yeniden dene.");
+    grup.forEach((s, sira) => {
+      const kayit = kayitlar.find((k) => k && String(k.index) === String(s.index)) || kayitlar[sira];
+      const hareket = String(kayit?.video_prompt || "").replace(/\s+/g, " ").trim();
+      if (hareket) bildir?.(s, hareket);
     });
   }
 }

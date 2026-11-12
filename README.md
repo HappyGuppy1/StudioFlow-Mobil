@@ -6,7 +6,7 @@ dışa aktarma telefonda yapılır.
 
 **Aç:** https://happyguppy1.github.io/StudioFlow-Mobil/
 
-> **Sürüm 0.5 (erken sürüm).** API anahtarları telefonda değil, kendi Cloudflare hesabındaki **kasada**
+> **Sürüm 0.10 (erken sürüm).** API anahtarları telefonda değil, kendi Cloudflare hesabındaki **kasada**
 > durur. Projeler telefonda saklanır; yarıda kalan üretim kaldığı yerden sürer.
 
 ## Telefona kurulum
@@ -28,13 +28,14 @@ kendiliğinden gelir.
 3. **Projeler › Yeni proje › Senaryo:** anlatım metnini yaz ya da yapıştır; istersen konuyu yazıp
    *Senaryoyu Gemini yazsın*'a bas. Dili, sesi ve biçimi seç, *Sahnelere böl*'e bas.
 4. **Sahneler:** *Kaldığın yerden devam et* sırayla eksik görsel tariflerini, seslendirmeyi, görselleri ve (açıksa)
-   hareketli klipleri üretir. Her sahneyi ayrı ayrı düzeltebilir ya da galeriden görsel seçebilirsin.
+   hareket tariflerini üretir. Klipler açıksa kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra
+   **Üretim › Görselleri onayla** ile klipleri başlat. Her sahneyi ayrı ayrı düzeltebilir ya da galeriden görsel seçebilirsin.
 5. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile kaydet.
 
 | Servis | Ne için | Zorunlu mu |
 |---|---|---|
 | Gemini | Seslendirme, senaryo, görsel tarifleri | Evet |
-| Cloudflare (Workers AI) | Görsel üretimi | Hayır; görselleri galeriden de ekleyebilirsin |
+| Cloudflare (Workers AI) | Görsel üretimi; altyazıyı sese oturtma (whisper) | Hayır; görselleri galeriden de ekleyebilirsin, altyazı zamanı tahmini kalır |
 | Hugging Face | Görselleri hareketli klibe çevirme (LTX) | Hayır |
 
 ## Kasa
@@ -70,8 +71,9 @@ Güvenlik notları:
   üretim sırasında ekranı açık tutar.
 - **Uzun videolar.** Video bellekte oluşturulur; kısa videolar sorunsuzdur, çok uzun videolar telefonun
   belleğini aşabilir.
-- **Zamanlama yaklaşıktır.** Sahne geçişleri ve altyazı süreleri metin uzunluğuna göre paylaştırılır,
-  kelime kelime hizalanmaz.
+- **Altyazı zamanlaması Cloudflare ister.** Ses üretilince Cloudflare (whisper) ile dinlenir; sahne geçişleri ve
+  altyazı sözün söylendiği ana oturur. Cloudflare hesabı yoksa süreler metin uzunluğuna göre paylaştırılır (tahmini).
+- **Konuşma hızı ve ton** üretilmiş sese sonradan uygulanır (kota harcamaz); büyük değişikliklerde ses doğallığını yitirebilir.
 - **Klipler kotalıdır.** Hareketlendirme Hugging Face'in ücretsiz ZeroGPU kotasını kullanır (klip başına
   yaklaşık 40 sn). Kota dolunca kalan sahneler yavaş yakınlaşan durağan görselle gösterilir.
 - **Projeler tarayıcı deposundadır.** Uygulamayı ana ekrana kur; Safari'de site verilerini silersen
@@ -95,7 +97,10 @@ ile sunup `http://127.0.0.1:8765/` adresini aç.
 | `js/depo.js` | Kalıcı depo (IndexedDB): projeler, görseller, ses, klipler |
 | `js/metin.js` | Gemini ile senaryo ve görsel tarifi |
 | `js/gemini.js` | Gemini TTS ile seslendirme |
-| `js/cloudflare.js` | Cloudflare Workers AI ile görsel |
+| `js/hizalama.js` | Sesi dinleyip kelime zamanlarını çıkarma (altyazıyı sese oturtma) |
+| `js/tempo.js` | Konuşma hızı ve ton |
+| `js/karisim.js` | Konuşma + müzik karışımı (sıralı müzikler, kırpma, ducking) |
+| `js/cloudflare.js` | Cloudflare Workers AI ile görsel ve konuşma tanıma |
 | `js/video_ltx.js` | Hugging Face LTX Space'i ile görselden klip |
 | `js/disa_aktar.js` | Video dışa aktarma (WebCodecs; yedek: MediaRecorder) |
 | `sw.js` | Çevrimdışı açılış |
