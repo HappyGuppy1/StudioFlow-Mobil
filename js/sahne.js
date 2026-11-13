@@ -40,7 +40,7 @@ export function yeniProje() {
     genel: "", negatif: "", promptModel: "", sahneUst: SAHNE_TAVAN_VARSAYILAN, plan: null, sesParcalari: null,
     dil: ayar.dil || "tr", ses: ayar.ses || "Charon", model: ayar.model || SES_MODELLERI[0], stil: VARSAYILAN_STIL,
     gorselStili: VARSAYILAN_GORSEL_STIL, gorselModel: ayar.gorselModel || GORSEL_MODELLERI[0].kimlik, boyut: ayar.boyut || "720x1280",
-    altyazi: false, hareketli: false, sahneler: [], sesSureleri: {}, sesZamanlari: {}, sesHiz: 0, sesTon: 0,
+    altyazi: false, hareketli: true, sahneler: [], sesSureleri: {}, sesZamanlari: {}, sesHiz: 0, sesTon: 0,
     gorselEn: 0, gorselBoy: 0, gorselAdim: 0, gorselGuidance: 0, onAyar: "", gorselOnay: "BEKLİYOR",
     diller: {}, muzikler: [], muzikSira: [], muzikAyar: { tekrarla: true, ducking: true },
   };

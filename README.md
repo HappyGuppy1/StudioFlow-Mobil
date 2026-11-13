@@ -31,7 +31,7 @@ kendiliğinden gelir.
    seslendirme → kelime zamanları (altyazı) → sahne planı → görsel ve video prompt'ları → görseller → görsel onayı → klipler.
    Sahneleri yapay zekâ anlatımın cümlelerinden kurar; her sahne sesteki ilk kelimesinin söylendiği anda başlar.
    Görsel prompt'u olmayan sahnenin görseli, video prompt'u olmayan sahnenin klibi üretilmez.
-   Klipler açıksa kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra **Üretim › Görselleri onayla**.
+   Kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra **✅ Onayla · videoları üret** ile sahne videolarını (LTX-2.3, Hugging Face) başlat.
 5. **Karışım:** istersen altyazıyı, dublajı ve müziği işaretle, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile kaydet.
 
 | Servis | Ne için | Zorunlu mu |

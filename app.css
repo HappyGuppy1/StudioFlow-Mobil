@@ -400,3 +400,6 @@ body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
 .ed-panel fieldset.grup { min-width: 0; }
 .plan-rapor li, .editor details.katlanir summary { overflow-wrap: anywhere; }
 .editor .ed-panel .genis-dugme { white-space: normal; line-height: 1.25; }
+/* Üretim: görsel onayı kapısı (masaüstündeki .kapi) */
+.kapi { border: 1px solid var(--vurgu); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: rgba(110, 130, 255, .08); }
+.kapi p { margin: 0; font-size: 12.5px; line-height: 1.4; }

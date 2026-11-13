@@ -82,6 +82,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     P.senaryo = P.sesParcalari.join(" ");
   }
   for (const s of P.sahneler) s.negatif ??= "";
+  P.hareketli = true;                // video üretimi akışın her zaman parçasıdır (masaüstündeki gibi)
   P.genel ??= ""; P.negatif ??= ""; P.promptModel ??= ""; P.sahneUst ??= SAHNE_TAVAN_VARSAYILAN; P.plan ??= null;
   P.dublajSecili = P.diller[P.dublajSecili] ? P.dublajSecili : (P.diller[P.etkinDil] ? P.etkinDil : Object.keys(P.diller)[0] || "");
   P.isaret ||= { video: true, seslendirme: true, dublaj: !!P.diller[P.etkinDil], muzik: true, altyazi: !!P.altyazi };
@@ -154,7 +155,7 @@ export async function projeGorunumu(kok, id, kabuk) {
   const isAlani = h("div", { class: "ed-is", hidden: true }, isDurumu, durdur, isKapat, isCubugu);
 
   const adEtiketi = h("h1", { class: "ed-ad" }, P.ad);
-  const uretDugmesi = h("button", { class: "dugme birincil kucuk is-dugme", onclick: () => tumunuUret() }, "▶ Kaldığın yerden devam et");
+  const uretDugmesi = h("button", { class: "dugme birincil kucuk is-dugme", onclick: () => (onayBekliyor() ? gorselOnayiVer() : tumunuUret()) }, "▶ Kaldığın yerden devam et");
   const ustCubuk = h("header", { class: "ed-ust" },
     h("button", { class: "ed-ikon", "aria-label": "Projelere dön", onclick: () => { location.hash = "#/"; } }, "‹"),
     adEtiketi, h("span", { class: "ed-ozet" }), h("span", { class: "bosluk" }), uretDugmesi,
@@ -447,7 +448,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     let biten = 0;
     for (const sahne of hedefler) {
       durduysa();
-      const onek = `Klip ${biten + 1} / ${hedefler.length}`;
+      const onek = `Video ${biten + 1} / ${hedefler.length}`;
       adim(`${onek} üretiliyor…`, biten / hedefler.length);
       await klipUret(sahne, (mesaj) => adim(`${onek} · ${mesaj.replace(/^LTX · /, "")}`, biten / hedefler.length));
       biten++;
@@ -506,8 +507,10 @@ export async function projeGorunumu(kok, id, kabuk) {
     return yazilan;
   }
 
-  // Video prompt'u olmayan sahnenin klibi üretilmez (genel bir hareketle doldurulmaz).
+  // Video prompt'u olmayan sahnenin videosu üretilmez (genel bir hareketle doldurulmaz).
   const klipBekleyenler = () => P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim() && (s.hareket || "").trim());
+  /** Bütün kareler hazır, videolar görsel onayını bekliyor mu? */
+  const onayBekliyor = () => P.gorselOnay !== "VERİLDİ" && klipBekleyenler().length > 0 && P.sahneler.every((s) => s.gorselVar || !s.metin.trim());
   const nolar = (liste) => liste.map((s) => P.sahneler.indexOf(s) + 1).join(", ");
 
   /**
@@ -547,14 +550,14 @@ export async function projeGorunumu(kok, id, kabuk) {
     if (!P.senaryo.trim() && !P.sahneler.length) { panel = "metin"; cizPanel(); return alert("Önce Metin bölümüne anlatım metnini yaz."); }
     if (!confirm("Kaldığın yerden devam edilsin mi?\n\nSırayla eksik olanlar üretilir: seslendirme → kelime zamanlaması → sahne planı → görsel"
       + (P.hareketli ? " ve video" : "") + " prompt'ları → görseller" + (Object.keys(P.diller).length ? " → dublajlar" : "") + ". Hazır olanlara dokunulmaz. Kota harcar."
-      + (!P.hareketli ? "" : P.gorselOnay !== "VERİLDİ" ? "\n\nKlipler, sen görselleri onayladıktan sonra üretilir." : "\n\nGörseller onaylı: eksik klipler de üretilir."))) return;
+      + (P.gorselOnay !== "VERİLDİ" ? "\n\nKareler bitince durur; videolar sen kareleri onayladıktan sonra üretilir." : "\n\nGörseller onaylı: eksik sahne videoları da üretilir."))) return;
     return calistir(tumunuIsi);
   };
   /** Görsel onayı: kareler beğenildi, klip üretimi başlasın (masaüstündeki "Görsel onayı" kapısı). */
   function gorselOnayiVer() {
     if (is.calisiyor) return;
     const n = klipBekleyenler().length;
-    if (!confirm(`Görseller onaylansın mı?\n\n${n} sahnenin klibi üretilir (klip başına yaklaşık 40 sn, Hugging Face kotası). `
+    if (!confirm(`Görseller onaylansın mı?\n\nOnay projeye yazılır ve ${n} sahnenin videosu LTX-2.3 ile üretilmeye başlar (video başına yaklaşık 40 sn, Hugging Face kotası). `
       + "Beğenmediğin kare varsa önce sağ panelden yenile.")) return;
     P.gorselOnay = "VERİLDİ";
     kaydet();
@@ -611,16 +614,16 @@ export async function projeGorunumu(kok, id, kabuk) {
     const bitir = (ek = "") => (ozet.length ? `Üretildi: ${ozet.join(", ")}.` : ek ? "" : "Her şey zaten hazır.") + ek + not;
     if (!P.hareketli) return bitir();
     const promptsuzKlip = P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim() && !(s.hareket || "").trim());
-    if (promptsuzKlip.length) not += ` Sahne ${nolar(promptsuzKlip)}: video prompt'u yazılamadı (Gemini içerik filtresi), bu yüzden klibi üretilmeyecek. Sağ panelden “Video prompt'unu yaz”ı dene ya da elle yaz.`;
+    if (promptsuzKlip.length) not += ` Sahne ${nolar(promptsuzKlip)}: video prompt'u yazılamadı (Gemini içerik filtresi), bu yüzden videosu üretilmeyecek. Sağ panelden “Video prompt'unu yaz”ı dene ya da elle yaz.`;
     // 6) Görsel onayı → 7) klipler
     const klipsiz = klipBekleyenler();
     if (!klipsiz.length) return bitir();
     if (P.gorselOnay !== "VERİLDİ") {
       panel = "uretim";
-      return bitir(` ${klipsiz.length} klip GÖRSEL ONAYI bekliyor: kareleri incele, beğenmediğini sağ panelden yenile, sonra “Görselleri onayla”ya bas.`);
+      return bitir(` Bütün kareler hazır · ${klipsiz.length} sahne videosu GÖRSEL ONAYI bekliyor: kareleri incele, beğenmediğini sağ panelden yenile, sonra Üretim bölümünde “✅ Onayla · LTX-2.3 ile videoları üret”e bas.`);
     }
-    if (!havuz.hesapVar("huggingface")) return bitir(" Klipler için Hugging Face hesabı yok: API sayfasından ekle.");
-    ozet.push(`${await klipAdimi(klipsiz)} klip`);
+    if (!havuz.hesapVar("huggingface")) return bitir(" Videolar için Hugging Face hesabı yok: API sayfasından ekle.");
+    ozet.push(`${await klipAdimi(klipsiz)} sahne videosu`);
     return bitir();
   };
   // ── Görsel ve klip adresleri ────────────────────────────────────────────────
@@ -746,7 +749,7 @@ export async function projeGorunumu(kok, id, kabuk) {
     if (P.hareketli && sahne.videoVar) {
       const adres = await klipAdresi(sahne);
       if (adres) {
-        // LTX klibe kendi müziğini ekler: önizleme klibi her zaman sessizdir. `muted` özniteliği sonradan
+        // LTX klibe kendi müziğini ekler: önizleme videosu her zaman sessizdir. `muted` özniteliği sonradan
         // oluşturulan öğede sesi kapatmaz; özelliğin kendisi atanır.
         icerik = h("video", { src: adres, playsinline: true, preload: "auto", poster: gorselAdresi });
         icerik.muted = true;
@@ -948,39 +951,56 @@ export async function projeGorunumu(kok, id, kabuk) {
         guidanceAlani ? aralikSatiri("Guidance (CFG)", guidanceAlani.min, guidanceAlani.max, 0.5, P.gorselGuidance || guidanceAlani.varsayilan, (d) => elle({ gorselGuidance: d })) : null,
         tanim.alanlar.length ? null : aciklama("Bu model adım ve guidance almaz."),
         aciklama("Bu ayarlar bundan sonra üretilen görsellere uygulanır.")),
-      grup("Video · hareket",
-        onay("Görselleri hareketlendir (LTX)", P.hareketli, (d) => { P.hareketli = d; kaydet(); ciz(); }),
-        aciklama("Her görsel birkaç saniyelik klibe çevrilir; klip başına yaklaşık 40 sn sürer ve Hugging Face kotasından düşer. Klipler, sen görselleri onayladıktan sonra üretilir.")),
+      grup("Video ayarları",
+        h("div", { class: "iz-kayit" }, h("span", null, "Video servisi"), h("span", { class: "ekli" }, "LTX-2.3 · Hugging Face")),
+        aciklama("Kareler onaylandıktan sonra her sahnenin karesi, video prompt'uyla sahne süresi kadar (en fazla 8 sn) bir videoya çevrilir. Video başına yaklaşık 40 sn sürer ve Hugging Face kotasından düşer.")),
     ];
   }
 
   function uretimPaneli() {
     const z = zamanlama(P), n = P.sahneler.length;
-    const satir = (ad, biten, toplam) => h("div", { class: "iz-kayit" }, h("span", null, ad),
-      h("span", { class: "ekli" + (toplam && biten >= toplam ? "" : " eksik") }, toplam ? `${biten} / ${toplam}` : "—"));
-    const yazi = (ad, deger, tamam, veri = {}) => h("div", { class: "iz-kayit" }, h("span", null, ad), h("span", { class: "ekli" + (tamam ? "" : " eksik"), ...veri }, deger));
+    const tamam = P.sahneler.filter((s) => s.videoVar).length, yarim = P.sahneler.filter((s) => s.gorselVar && !s.videoVar).length;
+    const promptlu = P.sahneler.filter((s) => (s.prompt || "").trim() && (s.hareket || "").trim()).length;
     const onayli = P.gorselOnay === "VERİLDİ", bekleyen = klipBekleyenler().length;
+    const durumAdi = !P.senaryo.trim() && !n ? "anlatım metni bekleniyor"
+      : z.sesDurumu !== "tam" ? "seslendirme bekliyor"
+      : !n ? "sahne planı bekliyor"
+      : promptlu < n ? "prompt'lar bekliyor"
+      : tamam + yarim < n ? "kareler bekliyor"
+      : tamam === n ? "tamamlandı"
+      : !onayli ? "görsel onayı bekleniyor" : "videolar bekliyor";
+    const satir = (ad, deger, veri = {}) => [h("dt", null, ad), h("dd", veri, deger)];
+    const adim = (ad, biten, toplam) => h("div", { class: "iz-kayit" }, h("span", null, ad),
+      h("span", { class: "ekli" + (toplam && biten >= toplam ? "" : " eksik") }, toplam ? `${biten} / ${toplam}` : "—"));
+    // ② Görsel onayı kapısı: kareler hazır, videolar onay bekliyor.
+    const onayGerek = !onayli && n > 0 && yarim > 0;
+    const kapi = onayGerek ? h("div", { class: "kapi", "data-kapi": "" },
+      h("p", null, h("b", null, "② Görsel onayı: "), "kareleri sahnelerden incele; beğenmediğini sağ panelden yenile, sonra videoları başlat. Hazır sahne videoları korunur, üretim ilk eksik sahneden sürer."),
+      tamam + yarim < n ? h("p", { class: "soluk aciklama" }, `${n - tamam - yarim} sahnenin karesi henüz yok; önce “Kaldığı yerden devam et” ile tamamla.`) : null,
+      h("button", { class: "dugme birincil genis-dugme is-dugme", "data-onayla": "", disabled: is.calisiyor || !bekleyen, onclick: gorselOnayiVer }, "✅ Onayla · LTX-2.3 ile videoları üret")) : null;
     return [
       h("h2", null, "Üretim"),
-      grup("Durum · üretim sırasıyla",
-        satir("1 · Seslendirme", z.parcaSayisi - z.eksik, z.parcaSayisi),
-        satir("2 · Kelime zamanları (altyazı)", z.zamanliParca, z.parcaSayisi),
-        yazi("3 · Sahne planı", n ? `${n} sahne` : "—", n > 0, { "data-plan-durum": "" }),
-        satir("4 · Görsel prompt'ları", P.sahneler.filter((s) => (s.prompt || "").trim()).length, n),
-        P.hareketli ? satir("4 · Video prompt'ları", P.sahneler.filter((s) => (s.hareket || "").trim()).length, n) : null,
-        satir("5 · Görseller", P.sahneler.filter((s) => s.gorselVar).length, n),
-        P.hareketli ? yazi("6 · Görsel onayı", onayli ? "VERİLDİ" : "BEKLİYOR", onayli, { "data-onay": "" }) : null,
-        P.hareketli ? satir("7 · Klipler", P.sahneler.filter((s) => s.videoVar).length, P.sahneler.filter((s) => s.gorselVar).length) : null,
-        Object.keys(P.diller).map((kod) => { const d = zamanlama(dilGorunumu(P, kod)); return satir(`${dilAdi(kod)} dublajı`, d.parcaSayisi - d.eksik, d.parcaSayisi); })),
+      kapi,
+      h("dl", { class: "bilgi-listesi" },
+        satir("Durum", durumAdi, { "data-durum-adi": "" }),
+        satir("Sahneler", n ? `${tamam}/${n} tamam · ${yarim} yarım · ${n - tamam - yarim} bekliyor` : "—"),
+        satir("Görsel onayı", onayli ? "VERİLDİ" : "BEKLİYOR", { "data-onay": "" }),
+        satir("Video servisi", "LTX-2.3 · Hugging Face")),
       h("div", { class: "dugme-satiri" },
         h("button", { class: "dugme birincil genis-dugme is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "▶ Kaldığın yerden devam et")),
-      P.hareketli ? h("div", { class: "dugme-satiri" }, onayli
-        ? h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => { P.gorselOnay = "BEKLİYOR"; kaydet(); cizPanel(); } }, "Görsel onayını geri al")
-        : h("button", { class: "dugme genis-dugme is-dugme", "data-onayla": "", disabled: is.calisiyor || !bekleyen, onclick: gorselOnayiVer },
-            bekleyen ? `✓ Görselleri onayla · ${bekleyen} klibi üret` : "✓ Görselleri onayla (önce görseller üretilmeli)")) : null,
-      aciklama("Önce anlatımın tamamı seslendirilir ve kelime zamanları çıkarılır. Sonra yapay zekâ anlatımı sahnelere böler; her sahne sesteki yerine oturtulur. "
-        + "Ardından prompt'lar yazılır ve görseller üretilir. Yarıda kalırsa kaldığı yerden sürer."
-        + (P.hareketli ? " Kareler bitince durur ve görsel onayını bekler; onaydan sonra yenilenen kare yeniden onay ister." : "")),
+      onayli && tamam < n ? h("div", { class: "dugme-satiri" },
+        h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => { P.gorselOnay = "BEKLİYOR"; kaydet(); cizPanel(); } }, "Görsel onayını geri al")) : null,
+      grup("Adımlar · üretim sırasıyla",
+        adim("1 · Seslendirme", z.parcaSayisi - z.eksik, z.parcaSayisi),
+        adim("2 · Kelime zamanları (altyazı)", z.zamanliParca, z.parcaSayisi),
+        h("div", { class: "iz-kayit" }, h("span", null, "3 · Sahne planı"), h("span", { class: "ekli" + (n ? "" : " eksik"), "data-plan-durum": "" }, n ? `${n} sahne` : "—")),
+        adim("4 · Görsel prompt'ları", P.sahneler.filter((s) => (s.prompt || "").trim()).length, n),
+        adim("4 · Video prompt'ları", P.sahneler.filter((s) => (s.hareket || "").trim()).length, n),
+        adim("5 · Kareler", tamam + yarim, n),
+        h("div", { class: "iz-kayit" }, h("span", null, "6 · Görsel onayı"), h("span", { class: "ekli" + (onayli ? "" : " eksik") }, onayli ? "VERİLDİ" : "BEKLİYOR")),
+        adim("7 · Sahne videoları", tamam, n),
+        Object.keys(P.diller).map((kod) => { const d = zamanlama(dilGorunumu(P, kod)); return adim(`${dilAdi(kod)} dublajı`, d.parcaSayisi - d.eksik, d.parcaSayisi); })),
+      aciklama("Akış sırası: seslendirme → sahne planı → prompt'lar → kareler. Kareler bitince durur ve görsel onayını bekler; sen onaylayana kadar tek bir video üretilmez. Onaydan sonra yenilenen kare yeniden onay ister."),
     ];
   }
 
@@ -1030,7 +1050,7 @@ export async function projeGorunumu(kok, id, kabuk) {
       sayac,
       sesli ? [aciklama("Bu projede anlatım seslendirildi; metin değiştirilemez (sahneler sesin kelimelerine bağlıdır). Yeni metin için yeni proje aç ya da aşağıdaki düğmeyle bu projeyi baştan kur."),
         h("button", { class: "dugme kucuk tehlike is-dugme", disabled: is.calisiyor, onclick: () => {
-          if (confirm("Anlatım metni değiştirilsin mi?\n\nBu projenin sesi, sahneleri, görselleri, klipleri ve dublajları SİLİNİR; müzikler ve ayarlar kalır. Geri alınamaz.")) anlatimiSifirla();
+          if (confirm("Anlatım metni değiştirilsin mi?\n\nBu projenin sesi, sahneleri, görselleri, videoları ve dublajları SİLİNİR; müzikler ve ayarlar kalır. Geri alınamaz.")) anlatimiSifirla();
         } }, "Metni değiştir · projeyi baştan kur")] : null,
       grup("Prompt · genel brief, görsel stil ve negatif prompt",
         yaziAlani("Genel video prompt'u (İngilizce)", P.genel, { satir: 3, veri: { "data-genel": "" },
@@ -1457,7 +1477,7 @@ export async function projeGorunumu(kok, id, kabuk) {
             gorselAl: async (no) => videoTuvali(await depo.dosyalar.al(depo.gorselAnahtari(P.id, P.sahneler[no].id)), en, boy),
             videoAl: async (no) => {
               const kayit = await depo.dosyalar.al(depo.videoAnahtari(P.id, P.sahneler[no].id));
-              if (!kayit) throw new Error(`Sahne ${no + 1} klibi eksik; yeniden üret.`);
+              if (!kayit) throw new Error(`Sahne ${no + 1} videosu eksik; yeniden üret.`);
               return klipOgesi(kayit);
             },
             iptal: () => is.iptal,
@@ -1571,17 +1591,17 @@ export async function projeGorunumu(kok, id, kabuk) {
         ? yaziAlani(`Anlatım (${dilAdi(kod)} çevirisi)`, P.diller[kod].metinler[sahne.id], { satir: 3, veri: { "data-anlatim": "" },
             yerTutucu: "Çeviri yok: Dublaj bölümünden üret ya da buraya yaz.", degisti: (v) => { P.diller[kod].metinler[sahne.id] = v; metinDegisti(); } })
         : yaziAlani("Anlatım (Metin bölümünden gelir)", sahne.metin, { satir: 3, kilit: true, veri: { "data-anlatim": "" } }),
-      yaziAlani("Görsel tarifi · görsel prompt'u (İngilizce)", sahne.prompt, { satir: 3, yerTutucu: "Boş: “Kaldığın yerden devam et” yazar. Tarifsiz görsel üretilmez.", veri: { "data-prompt": "" },
+      yaziAlani("Görsel prompt'u (İngilizce)", sahne.prompt, { satir: 3, yerTutucu: "Boş: “Kaldığın yerden devam et” yazar. Tarifsiz görsel üretilmez.", veri: { "data-prompt": "" },
                                                            degisti: (v) => { sahne.prompt = v; kaydet(); } }),
       cloudflare.modelTanimi(P.gorselModel).negatif ? yaziAlani("Negatif prompt (İngilizce)", sahne.negatif, { yerTutucu: "Boş: projenin genel negatifi kullanılır.", veri: { "data-negatif": "" },
                                                                                  degisti: (v) => { sahne.negatif = v; kaydet(); } }) : null,
-      P.hareketli ? yaziAlani("Video prompt'u (İngilizce)", sahne.hareket, { yerTutucu: "Boş: “Kaldığın yerden devam et” yazar. Prompt'suz klip üretilmez.", veri: { "data-hareket": "" },
+      P.hareketli ? yaziAlani("Video prompt'u (İngilizce)", sahne.hareket, { yerTutucu: "Boş: “Kaldığın yerden devam et” yazar. Prompt'suz video üretilmez.", veri: { "data-hareket": "" },
                                                                           degisti: (v) => { sahne.hareket = v; kaydet(); } }) : null,
       // Sahne işlemleri: masaüstündeki gibi her biri önce ne olacağını sorar, yalnızca bu sahneyi etkiler.
       h("p", { class: "soluk aciklama", "data-sahne-durum": "" }, [
         `görsel prompt'u ${(sahne.prompt || "").trim() ? "✓" : "—"}`, `ses ${sesVar ? "✓" : "—"}`,
         `görsel ${sahne.gorselVar ? "✓" : "—"}`, P.hareketli ? `video prompt'u ${(sahne.hareket || "").trim() ? "✓" : "—"}` : "",
-        P.hareketli ? `klip ${sahne.videoVar ? "✓" : "—"}` : ""].filter(Boolean).join(" · ")),
+        P.hareketli ? `video ${sahne.videoVar ? "✓" : "—"}` : ""].filter(Boolean).join(" · ")),
       h("div", { class: "ed-islemler" },
         sahneIsi(sesVar ? "🎙 Sesi yeniden üret" : "🎙 Ses üret", !!sesParcasi,
           () => !sesVar ? "" : `Sahne ${no} sesi yeniden üretilsin mi?\n\n${sesParcasi.sahneler.length > 1
@@ -1604,30 +1624,30 @@ export async function projeGorunumu(kok, id, kabuk) {
           }),
         sahneIsi(sahne.gorselVar ? "🖼 Görseli yeniden üret" : "🖼 Görsel üret", !!(sahne.prompt || "").trim(),
           () => (sahne.gorselVar
-            ? `Sahne ${no} görseli yenilensin mi?\n\nGörsel${sahne.videoVar ? " ve klibi" : ""} silinir, aynı tarifle yenisi üretilir (görsel kotası harcar).` : ""),
+            ? `Sahne ${no} görseli yenilensin mi?\n\nGörsel${sahne.videoVar ? " ve videosu" : ""} silinir, aynı tarifle yenisi üretilir (görsel kotası harcar).` : ""),
           async () => {
             if (!havuz.hesapVar("cloudflare")) throw new Error("Cloudflare hesabı yok: API sayfasından ekle ya da galeriden görsel seç.");
             const klipVardi = sahne.videoVar;
             adim(`Sahne ${no} görseli üretiliyor…`);
             await gorselUret(sahne);
-            return `Sahne ${no} görseli hazır.` + (klipVardi ? " Eski klip silindi; “Klibi yeniden üret” ya da “Kaldığın yerden devam et” ile yenilenir." : "");
+            return `Sahne ${no} görseli hazır.` + (klipVardi ? " Eski video silindi; “Videoyu yeniden üret” ya da “Kaldığın yerden devam et” ile yenilenir." : "");
           }),
         P.hareketli ? sahneIsi((sahne.hareket || "").trim() ? "🎞 Video prompt'unu yeniden yaz" : "🎞 Video prompt'unu yaz", !!(sahne.prompt || "").trim() && !!sahne.metin.trim(),
           () => ((sahne.hareket || "").trim()
-            ? `Sahne ${no} video prompt'u yeniden yazılsın mı?\n\nŞimdikinin üzerine yazılır (1 Gemini isteği). Klip değişmez; yeni prompt'la klip için sonra “Klibi yeniden üret”e bas.` : ""),
+            ? `Sahne ${no} video prompt'u yeniden yazılsın mı?\n\nŞimdikinin üzerine yazılır (1 Gemini isteği). Video değişmez; yeni prompt'la video için sonra “Videoyu yeniden üret”e bas.` : ""),
           async () => {
             geminiGerek();
             if (!(await hareketAdimi([sahne]))) throw new Error(`Sahne ${no} video prompt'u yazılamadı: Gemini içerik filtresi reddetti ya da boş döndü. Yeniden dene ya da elle yaz.`);
-            return `Sahne ${no} video prompt'u yazıldı.` + (sahne.videoVar ? " Klip eski prompt'la duruyor; yenilemek için “Klibi yeniden üret”e bas." : "");
+            return `Sahne ${no} video prompt'u yazıldı.` + (sahne.videoVar ? " Video eski prompt'la duruyor; yenilemek için “Videoyu yeniden üret”e bas." : "");
           }) : null,
-        P.hareketli ? sahneIsi(sahne.videoVar ? "🎬 Klibi yeniden üret" : "🎬 Klip üret", sahne.gorselVar && !!(sahne.hareket || "").trim(),
+        P.hareketli ? sahneIsi(sahne.videoVar ? "🎬 Videoyu yeniden üret" : "🎬 Video üret", sahne.gorselVar && !!(sahne.hareket || "").trim(),
           () => (sahne.videoVar
-            ? `Sahne ${no} klibi yeniden üretilsin mi?\n\nYalnızca bu sahnenin klibi yenilenir, aynı görselden üretilir (video kotası harcar). Yenisi gelene kadar eski klip durur.` : ""),
+            ? `Sahne ${no} videosu yeniden üretilsin mi?\n\nYalnızca bu sahnenin videosu yenilenir, aynı görselden üretilir (video kotası harcar). Yenisi gelene kadar eski video durur.` : ""),
           async () => {
             if (!havuz.hesapVar("huggingface")) throw new Error("Hugging Face hesabı yok: API sayfasından ekle.");
-            adim(`Sahne ${no} klibi üretiliyor…`);
+            adim(`Sahne ${no} videosu üretiliyor…`);
             await klipUret(sahne, (mesaj) => adim(`Sahne ${no} · ${mesaj.replace(/^LTX · /, "")}`));
-            return `Sahne ${no} klibi hazır.`;
+            return `Sahne ${no} videosu hazır.`;
           }) : null,
         h("label", { class: "dugme kucuk dosya" }, "📁 Galeriden görsel", dosya))].filter(Boolean));
   }
@@ -1640,9 +1660,10 @@ export async function projeGorunumu(kok, id, kabuk) {
     const ses = !z.parcaSayisi ? "" : z.sesDurumu === "tam" ? "ses ✓" : z.sesDurumu === "eksik" ? "ses eksik" : "ses yok";
     ustCubuk.querySelector(".ed-ozet").textContent = P.sahneler.length
       ? [kod ? dilAdi(kod) : "", `${P.sahneler.length} sahne`, `${gorselli} görsel`,
-         P.hareketli ? `${P.sahneler.filter((s) => s.videoVar).length} klip` : "", ses, sureYaz(z.toplam)].filter(Boolean).join(" · ")
+         `${P.sahneler.filter((s) => s.videoVar).length} video`, ses, sureYaz(z.toplam)].filter(Boolean).join(" · ")
       : "";
     uretDugmesi.disabled = is.calisiyor;
+    uretDugmesi.textContent = onayBekliyor() ? "✅ Onayla · videoları üret" : "▶ Kaldığın yerden devam et";
   }
 
   const PANELLER = {
