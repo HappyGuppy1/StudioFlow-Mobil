@@ -6,7 +6,7 @@ dışa aktarma telefonda yapılır.
 
 **Aç:** https://happyguppy1.github.io/StudioFlow-Mobil/
 
-> **Sürüm 0.10 (erken sürüm).** API anahtarları telefonda değil, kendi Cloudflare hesabındaki **kasada**
+> **Sürüm 0.11 (erken sürüm).** API anahtarları telefonda değil, kendi Cloudflare hesabındaki **kasada**
 > durur. Projeler telefonda saklanır; yarıda kalan üretim kaldığı yerden sürer.
 
 ## Telefona kurulum
@@ -25,12 +25,14 @@ kendiliğinden gelir.
 2. **API › Gemini / Cloudflare / Hugging Face:** hesaplarını ekle. Her hesap kaydedilmeden önce denenir
    ve doğrudan kasaya yazılır. Aynı servise birden çok hesap ekleyebilirsin; kotası dolan hesap atlanır,
    sıradakiyle sürülür.
-3. **Projeler › Yeni proje › Senaryo:** anlatım metnini yaz ya da yapıştır; istersen konuyu yazıp
-   *Senaryoyu Gemini yazsın*'a bas. Dili, sesi ve biçimi seç, *Sahnelere böl*'e bas.
-4. **Sahneler:** *Kaldığın yerden devam et* sırayla eksik görsel tariflerini, seslendirmeyi, görselleri ve (açıksa)
-   video prompt'larını üretir. Görsel tarifi olmayan sahnenin görseli, video prompt'u olmayan sahnenin klibi üretilmez. Klipler açıksa kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra
-   **Üretim › Görselleri onayla** ile klipleri başlat. Her sahneyi ayrı ayrı düzeltebilir ya da galeriden görsel seçebilirsin.
-5. **Video:** istersen altyazıyı aç, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile kaydet.
+3. **Projeler › Yeni proje › Metin:** anlatım metnini yaz ya da yapıştır. İstersen genel video prompt'unu (brief),
+   görsel stili ve sahne süresi üst sınırını ayarla. Dil ve ses **Seslendirme** bölümündedir.
+4. **Kaldığın yerden devam et** masaüstü StudioFlow ile aynı sırayla üretir:
+   seslendirme → kelime zamanları (altyazı) → sahne planı → görsel ve video prompt'ları → görseller → görsel onayı → klipler.
+   Sahneleri yapay zekâ anlatımın cümlelerinden kurar; her sahne sesteki ilk kelimesinin söylendiği anda başlar.
+   Görsel prompt'u olmayan sahnenin görseli, video prompt'u olmayan sahnenin klibi üretilmez.
+   Klipler açıksa kareler bitince durur: kareleri incele, beğenmediğini yenile, sonra **Üretim › Görselleri onayla**.
+5. **Karışım:** istersen altyazıyı, dublajı ve müziği işaretle, *Videoyu oluştur*'a bas, sonra *Kaydet / Paylaş* ile kaydet.
 
 | Servis | Ne için | Zorunlu mu |
 |---|---|---|
@@ -93,7 +95,8 @@ ile sunup `http://127.0.0.1:8765/` adresini aç.
 | `js/app.js` | Kabuk ve yönlendirme |
 | `js/gorunum/` | Ekranlar: projeler, proje (senaryo / sahneler / video), API, ayarlar |
 | `js/hesap.js` | Kasa bağlantısı, hesap havuzu, kota bekleme listesi |
-| `js/sahne.js` | Proje modeli: sahnelere bölme, ses planı, zamanlama, altyazı |
+| `js/sahne.js` | Proje modeli: anlatımın ses parçaları, zamanlama, altyazı |
+| `js/plan.js` | Sahne planı: cümleleri sahnelere gruplama, gerçek sese hizalama |
 | `js/depo.js` | Kalıcı depo (IndexedDB): projeler, görseller, ses, klipler |
 | `js/metin.js` | Gemini ile senaryo ve görsel tarifi |
 | `js/gemini.js` | Gemini TTS ile seslendirme |

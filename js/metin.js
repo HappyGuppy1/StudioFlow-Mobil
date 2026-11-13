@@ -1,23 +1,26 @@
 // Gemini ile metin üretimi: senaryo yazımı ve sahne başına görsel prompt'u.
 import { DILLER } from "./gemini.js";
+import { cumlelereBol, VARSAYILAN_NEGATIF } from "./sahne.js";
 import { zamanAsimi, zamanAsimiMi, geminiHatasi, hizmetIstegi, anahtarBos } from "./ag.js";
 
 const KOK = "https://generativelanguage.googleapis.com/v1beta";
 // Sırayla denenir: model kapatılmışsa (404), yoğunsa (503) ya da SURE_SINIRI içinde yanıt
 // vermezse sıradakine geçilir. Yoğun saatlerde bir model 503 yerine yanıtsız asılı kalabiliyor.
-const MODELLER = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-flash-lite-latest"];
+export const MODELLER = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-flash-lite-latest"];
 const SURE_SINIRI = 75_000;
 const GRUP = 6;     // tek istekte prompt'u yazılan sahne sayısı
 
 /** `anahtar`: Gemini anahtarı ya da hesap havuzu sarmalayıcısı `(is) => hesaplarla("gemini", is)`. */
-async function uret(anahtar, sistem, kullanici, json) {
-  if (typeof anahtar === "function") return anahtar((degerler) => uret(degerler.gemini_key, sistem, kullanici, json));
+async function uret(anahtar, sistem, kullanici, json, tercih = "") {
+  if (typeof anahtar === "function") return anahtar((degerler) => uret(degerler.gemini_key, sistem, kullanici, json, tercih));
+  // Seçili prompt modeli ilk denenir; yoğunsa ya da kapalıysa sıradakilere geçilir.
+  const modeller = MODELLER.includes(tercih) ? [tercih, ...MODELLER.filter((x) => x !== tercih)] : MODELLER;
   if (anahtarBos(anahtar)) throw new Error("Gemini hesabı yok: API sayfasından ekle.");
   let son = "";
   // Dört tur: Gemini yoğun saatlerde bütün modellerde 503 ("high demand") verebiliyor; turlar arasında
   // giderek uzayan beklemelerle (8, 20, 40 sn) yeniden denenir.
   const BEKLEMELER = [0, 8000, 20000, 40000];
-  for (const [sira, model] of BEKLEMELER.flatMap(() => MODELLER).entries()) {
+  for (const [sira, model] of BEKLEMELER.flatMap(() => modeller).entries()) {
     if (sira % MODELLER.length === 0 && sira) await new Promise((coz) => setTimeout(coz, BEKLEMELER[sira / MODELLER.length]));
     let yanit;
     try {
@@ -94,13 +97,9 @@ export async function senaryoYaz({ anahtar, konu, dil, saniye }) {
   return (await uret(anahtar, SENARYO_SISTEM, istek, false)).trim();
 }
 
-const PROMPT_SISTEM =
-  "You are an expert film director and prompt engineer for AI image generators. You receive "
-  + "consecutive narration segments of one video plus its visual style. For each segment write "
-  + "image_prompt in English: one still frame that illustrates the segment, 35 to 70 words "
-  + "(subject, action, setting, lighting, camera framing). Do not repeat the visual style "
-  + "keywords; the app appends the style itself.\n"
-  + "Image models draw every word literally, so:\n"
+// Kare kuralları: görsel modeli her kelimeyi olduğu gibi çizer.
+const KARE_KURALLARI =
+  "Image models draw every word literally, so:\n"
   + "- One main subject group in the foreground doing ONE clearly visible action; at most one "
   + "secondary group, placed explicitly ('behind them', 'in the background').\n"
   + "- The first sentence names the location and whether it is inside or outside.\n"
@@ -111,20 +110,45 @@ const PROMPT_SISTEM =
   + "filmable moment that carries its meaning; never a copy of the previous frame.\n"
   + "- Image models ignore negation and DRAW everything a prompt names. Never write what is "
   + "absent or hidden ('no text', 'without hats'). Describe only what IS visible.\n"
-  + "- The picture fills the whole frame edge to edge: never a border, frame, caption or panel.\n"
-  + "Keep continuity across segments: same characters, wardrobe, palette, location and era; "
-  + "advance the visible action with each segment.\n"
-  + "Reply ONLY with a JSON array. Every element must be exactly: "
-  + '{"index": <int>, "image_prompt": "<string>"}.';
+  + "- The picture fills the whole frame edge to edge: never a border, frame, caption or panel.\n";
+
+/**
+ * Görsel prompt'u sistem mesajı. Katmanlar masaüstündeki gibidir: genel video brief'i, görsel stil,
+ * (model destekliyorsa) varsayılan negatif prompt, anlatımın tamamı, önceki sahnelerin prompt'ları ve yazılacak
+ * sahneler (zaman aralıklarıyla). `kelimeSiniri`: görsel modeli yalnızca ilk bu kadar kelimeyi okuyorsa (SDXL).
+ */
+function promptSistemi(negatifli, kelimeSiniri) {
+  const uzunluk = kelimeSiniri
+    ? `aim for about ${Math.round(kelimeSiniri * 0.8)} words (hard maximum ${kelimeSiniri}; the image model reads only the first ${kelimeSiniri} words, so start with the main subject and its action, then setting, lighting and camera)`
+    : "35 to 70 words in plain descriptive sentences (main subject and its action, then setting, lighting, camera framing)";
+  return "You are an expert film director and prompt engineer for AI image generators. You write the image prompts "
+    + "for ONE narrated video, scene by scene, from these layers: 1) an overall video brief (story, cast, world, "
+    + "continuity rules) that holds for the whole video, 2) an overall visual style, "
+    + (negatifli ? "3) a default negative prompt, " : "")
+    + "then the full narration for context, the prompts already written for other scenes, and the scenes to write "
+    + "now, each with its own time range.\n"
+    + "Every prompt must belong to the brief and the style; the scene's narration decides only WHAT happens in that "
+    + "scene, never the world, look or cast. If no brief is given, infer one from the narration and stay consistent with it.\n"
+    + `For each scene write image_prompt in English: one still frame that illustrates the scene, ${uzunluk}. `
+    + "Do not repeat the visual style keywords; the app appends the style itself.\n"
+    + KARE_KURALLARI
+    + (negatifli ? "Also write negative_prompt for each scene: a comma-separated list that includes every item of the default "
+      + "negative prompt, then defects specific to this frame. Never put into it anything this frame must SHOW.\n" : "")
+    + "Scene 1 is the hook of the video: make its image the most striking frame of the video.\n"
+    + "Keep continuity across scenes: same characters, wardrobe, palette, location and era as the brief and the previous "
+    + "scenes; advance the visible action with each scene; consecutive scenes never repeat the same pose and framing.\n"
+    + "Reply ONLY with a JSON array. Every element must be exactly: "
+    + (negatifli ? '{"index": <int>, "image_prompt": "<string>", "negative_prompt": "<string>"}.' : '{"index": <int>, "image_prompt": "<string>"}.');
+}
 
 /**
  * Bir sahne grubunu tek istekte yazdırır. Gemini içerik filtresi grubu reddederse sahneler tek tek denenir;
  * tek sahne de reddedilirse `sadeIstek` (bağlamı azaltılmış istek) ile bir kez daha denenir.
  * Döner: `{ kayitlar: [{ index, … }], reddedilen: [index…] }`. Filtre dışındaki hatalar yükselir.
  */
-async function gruplaYaz(anahtar, sistem, grup, istek, sadeIstek, bicimHatasi) {
+async function gruplaYaz(anahtar, sistem, grup, istek, sadeIstek, bicimHatasi, model = "") {
   const dene = async (liste, kur) => {
-    const kayitlar = jsonCoz(await uret(anahtar, sistem, kur(liste), true));
+    const kayitlar = jsonCoz(await uret(anahtar, sistem, kur(liste), true, model));
     if (!Array.isArray(kayitlar)) throw new Error(bicimHatasi);
     return kayitlar;
   };
@@ -141,34 +165,40 @@ async function gruplaYaz(anahtar, sistem, grup, istek, sadeIstek, bicimHatasi) {
 }
 
 /**
- * Sahneler için görsel prompt'ları yazar. `sahneler`: `[{ index, metin }]` (yazılacaklar);
- * `onceki`: daha önce yazılmış `[{ index, prompt }]` (süreklilik için). `bildir(sahne, prompt)`
- * her grup bittikçe çağrılır, böylece yarıda kesilse de yazılanlar kalır.
+ * Sahneler için görsel prompt'ları yazar. `sahneler`: `[{ index, metin, bas, bit }]` (yazılacaklar);
+ * `onceki`: daha önce yazılmış `[{ index, prompt }]` (süreklilik için). `genel`: genel video brief'i, `stil`:
+ * görsel stil katmanı, `negatif`: varsayılan negatif (yalnızca `negatifDestekli` ise istenir).
+ * `bildir(sahne, prompt, negatif)` her grup bittikçe çağrılır, böylece yarıda kesilse de yazılanlar kalır.
  * Döner: içerik filtresi yüzünden yazılamayan sahne numaraları.
  */
-export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, onceki = [], bildir, iptal }) {
+export async function promptlariYaz({ anahtar, sahneler, dil, stil, genel = "", negatif = "", negatifDestekli = false, kelimeSiniri = 0,
+                                      tamMetin, onceki = [], model = "", bildir, iptal }) {
   const yazilan = [...onceki], reddedilen = [];
+  const sistem = promptSistemi(negatifDestekli, kelimeSiniri);
+  const brief = (genel || "").replace(/\s+/g, " ").trim();
   for (let i = 0; i < sahneler.length; i += GRUP) {
     if (iptal?.()) throw new Error("Durduruldu.");
     const grup = sahneler.slice(i, i + GRUP);
     const son = yazilan.slice(-4);
-    // `sade`: yalnızca sahnenin kendi metni (bütün anlatım ve önceki tarifler gönderilmez).
+    // `sade`: yalnızca sahnenin kendi metni (bütün anlatım ve önceki prompt'lar gönderilmez).
     const istek = (sade) => (liste) => {
       const bloklar = [
         `Narration language: ${DILLER[dil] || "English"}`,
-        `Overall visual style (appended by the app, do not repeat): ${stil || "cinematic, photorealistic"}`];
+        "Overall video brief (applies to every segment): " + (brief || "not given — infer a consistent brief from the narration"),
+        `Overall visual style (appended by the app, do not repeat): ${stil || "cinematic, photorealistic, consistent lighting"}`];
+      if (negatifDestekli) bloklar.push("Default negative prompt (include all of these in every negative_prompt): " + ((negatif || "").replace(/\s+/g, " ").trim() || VARSAYILAN_NEGATIF));
       if (!sade) {
         bloklar.push("Full narration (context only; write prompts only for the segments listed below): " + tamMetin.replace(/\s+/g, " ").trim());
         if (son.length) {
-          bloklar.push("Prompts already written for other segments of this same video (keep continuity):");
+          bloklar.push("Prompts already written for other segments of this same video (keep continuity with them):");
           for (const k of son) bloklar.push(`Segment ${k.index} image: ${k.prompt.replace(/\s+/g, " ")}`);
         }
       }
       bloklar.push(`There are ${liste.length} segments; write a prompt for each one.`, "");
-      for (const s of liste) bloklar.push(`Segment ${s.index}: ${s.metin}`);
+      for (const s of liste) bloklar.push(`Segment ${s.index}${s.bit > s.bas ? ` (${s.bas.toFixed(1)}-${s.bit.toFixed(1)}s)` : ""}: ${s.metin}`);
       return bloklar.join("\n");
     };
-    const sonuc = await gruplaYaz(anahtar, PROMPT_SISTEM, grup, istek(false), istek(true), "Gemini prompt'ları beklenen biçimde döndürmedi. Yeniden dene.");
+    const sonuc = await gruplaYaz(anahtar, sistem, grup, istek(false), istek(true), "Gemini prompt'ları beklenen biçimde döndürmedi. Yeniden dene.", model);
     reddedilen.push(...sonuc.reddedilen);
     grup.forEach((s, sira) => {
       if (sonuc.reddedilen.includes(s.index)) return;
@@ -176,13 +206,47 @@ export async function promptlariYaz({ anahtar, sahneler, dil, stil, tamMetin, on
       const prompt = String(kayit?.image_prompt || "").trim();
       if (prompt) {
         yazilan.push({ index: s.index, prompt });
-        bildir?.(s, prompt);
+        bildir?.(s, prompt, negatifDestekli ? String(kayit?.negative_prompt || "").trim() : "");
       }
     });
   }
   return reddedilen;
 }
 
+// Sahne planı: masaüstündeki `sahneleme.SAHNE_DETAY_SISTEM` ile aynı kurallar.
+const sahneSistemi = (alt, ust) =>
+  "You are a video editor planning the scene structure of ONE narrated video. "
+  + "The video is generated scene by scene: every scene is a single clip made from one "
+  + "still frame, and the narration is spoken over the scene in order. "
+  + "You receive the narration split into NUMBERED SENTENCES, its spoken language and the "
+  + "estimated spoken duration. Group CONSECUTIVE sentences into scenes and give each "
+  + "scene its OWN duration in seconds. Rules:\n"
+  + "- every sentence must be used exactly once and in order; a scene covers one or more "
+  + "consecutive sentences (never split a sentence),\n"
+  + `- each scene duration must stay between ${alt} and ${ust} seconds,\n`
+  + "- let the duration follow the content and pace: a slow descriptive sentence gets more "
+  + "time, a short punchy line less; do NOT give every scene the same duration,\n"
+  + "- the sum of all scene durations must be >= the estimated spoken duration, so the "
+  + "video never ends before the narration,\n"
+  + "- prefer fewer, coherent scenes over many tiny ones,\n"
+  + "- a sentence that shows nothing new on screen (a comment, feeling, thought or short "
+  + "punchline such as 'They call it duty.') never gets its own scene: group it with the "
+  + "neighbouring sentence that has a visible action or place,\n"
+  + "- start a new scene when the narration moves to a new place or a new visible action.\n"
+  + "Reply ONLY with a JSON array, without markdown fences and without extra keys: "
+  + '[{"cumleler": [<sentence numbers>], "saniye": <number>}, ...]';
+
+/**
+ * Anlatımın sahne planını yapay zekâya yazdırır: ardışık cümleleri sahnelere gruplar ve her sahneye süre verir.
+ * Döner: ham kayıtlar `[{ cumleler: [no…], saniye }]` ya da okunamadıysa `null` (bkz. `plan.planKur`).
+ */
+export async function sahnePlaniYaz({ anahtar, metin, dil, alt, ust, toplamSure, model = "" }) {
+  const istek = `Narration language: ${DILLER[dil] || dil}\n`
+    + `Estimated spoken duration: ${toplamSure.toFixed(1)} seconds\n`
+    + `Allowed scene duration: ${alt}-${ust} seconds\n`
+    + "Numbered sentences:\n" + cumlelereBol(metin).map((c, i) => `${i + 1}. ${c}`).join("\n");
+  return jsonCoz(await uret(anahtar, sahneSistemi(alt, ust), istek, true, model));
+}
 const HAREKET_SISTEM =
   "You write motion prompts for an image-to-video model. For each segment you receive the narration and the "
   + "description of its still frame. Write video_prompt in English, 15 to 35 words: how that exact frame comes "
@@ -200,7 +264,7 @@ const HAREKET_SISTEM =
  * `bildir(sahne, hareket)` her grup bittikçe çağrılır. Görsel tarifinden ayrı bir istektir: biri reddedilirse
  * öbürü etkilenmez. Döner: içerik filtresi yüzünden yazılamayan sahne numaraları.
  */
-export async function hareketleriYaz({ anahtar, sahneler, bildir, iptal }) {
+export async function hareketleriYaz({ anahtar, sahneler, model = "", bildir, iptal }) {
   const reddedilen = [];
   for (let i = 0; i < sahneler.length; i += 12) {
     if (iptal?.()) throw new Error("Durduruldu.");
@@ -214,7 +278,7 @@ export async function hareketleriYaz({ anahtar, sahneler, bildir, iptal }) {
       }
       return bloklar.join("\n");
     };
-    const sonuc = await gruplaYaz(anahtar, HAREKET_SISTEM, grup, istek(false), istek(true), "Gemini video prompt'larını beklenen biçimde döndürmedi. Yeniden dene.");
+    const sonuc = await gruplaYaz(anahtar, HAREKET_SISTEM, grup, istek(false), istek(true), "Gemini video prompt'larını beklenen biçimde döndürmedi. Yeniden dene.", model);
     reddedilen.push(...sonuc.reddedilen);
     grup.forEach((s, sira) => {
       if (sonuc.reddedilen.includes(s.index)) return;

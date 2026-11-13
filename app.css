@@ -389,3 +389,14 @@ body.editor-acik .ust, body.editor-acik .alt-cubuk { display: none; }
 .ed-ust .dugme.birincil { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
 /* İzler düğmesi: açılır kapanır olduğu belli olsun diye kırmızı */
 .editor .ed-zc-ac { background: #d64561; border-color: #d64561; color: #fff; }
+/* Metin: katlanır kutu ve sahne planı raporu */
+.editor details.katlanir { border: 1px solid var(--cizgi); border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+.editor details.katlanir summary { cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--yazi); padding: 4px 0; }
+.editor details.katlanir[open] summary { margin-bottom: 6px; }
+.plan-rapor { margin: 6px 0 0; padding-left: 20px; font-size: 11.5px; color: var(--soluk); max-height: 150px; overflow: auto; }
+.plan-rapor b { color: var(--yazi); }
+.ed-panel, .ed-denetci { overflow-x: hidden; }
+.ed-panel > *, .ed-denetci > * { min-width: 0; max-width: 100%; }
+.ed-panel fieldset.grup { min-width: 0; }
+.plan-rapor li, .editor details.katlanir summary { overflow-wrap: anywhere; }
+.editor .ed-panel .genis-dugme { white-space: normal; line-height: 1.25; }

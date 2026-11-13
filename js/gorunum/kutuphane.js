@@ -49,7 +49,7 @@ export async function kutuphaneGorunumu(kok, kabuk) {
   });
 
   const bos = () => h("p", { class: "soluk bos" },
-    "Henüz proje yok. Yeni bir proje aç; senaryonu yaz ya da yapıştır, uygulama sahnelere bölüp "
+    "Henüz proje yok. Yeni bir proje aç; anlatım metnini yaz ya da yapıştır; uygulama onu "
     + "seslendirsin, görselleri üretsin ve videoyu oluştursun.");
   const liste = h("div", { class: "proje-liste" }, kartlar.length ? kartlar : bos());
   kok.append(h("div", { class: "sayfa" }, yeni, liste));

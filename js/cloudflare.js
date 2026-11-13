@@ -9,7 +9,7 @@ export const MODELLER = [
   { kimlik: "@cf/black-forest-labs/flux-2-klein-4b", ad: "FLUX.2 klein 4B (önerilen)", cokParcali: true, adim: 16, alanlar: [] },
   { kimlik: "@cf/black-forest-labs/flux-1-schnell", ad: "FLUX.1 schnell (1024×1024 sabit)", sabitBoyut: true,
     alanlar: [{ ad: "steps", tur: "adim", min: 1, max: 8, varsayilan: 4 }] },
-  { kimlik: "@cf/bytedance/stable-diffusion-xl-lightning", ad: "SDXL Lightning", adim: 64, ikili: true,
+  { kimlik: "@cf/bytedance/stable-diffusion-xl-lightning", ad: "SDXL Lightning", adim: 64, ikili: true, negatif: true, kelime: 55,
     alanlar: [{ ad: "num_steps", tur: "adim", min: 1, max: 20, varsayilan: 4 }, { ad: "guidance", tur: "guidance", min: 1, max: 15, varsayilan: 7.5 }] },
 ];
 export const BOYUT_ALT = 256, BOYUT_UST = 2048;
@@ -57,10 +57,11 @@ async function calistir(model, { araci, hesap, token }, istek, sureSiniri = 300_
 }
 
 /** Görsel üretir ve `Blob` döndürür. `adim` ve `guidance` yalnızca modelin kabul ettiği alanlara yazılır. */
-export async function gorselUret({ araci, hesap, token, model, prompt, en, boy, adim, guidance }) {
+export async function gorselUret({ araci, hesap, token, model, prompt, negatif, en, boy, adim, guidance }) {
   if (!(prompt || "").trim()) throw new Error("Görsel için bir tarif yaz.");
   const tanim = modelTanimi(model);
   const alanlar = { prompt: prompt.trim() };
+  if (tanim.negatif && (negatif || "").trim()) alanlar.negative_prompt = negatif.trim();
   if (!tanim.sabitBoyut) {
     const oturt = (d) => Math.max(BOYUT_ALT, Math.min(BOYUT_UST, Math.round(d / tanim.adim) * tanim.adim));
     alanlar.width = oturt(en);

@@ -1,4 +1,8 @@
-// Proje modeli ve saf mantık: sahnelere bölme, seslendirme planı, zamanlama, altyazı blokları.
+// Proje modeli ve saf mantık: anlatımın ses parçaları, zamanlama, altyazı blokları.
+//
+// İşleyiş masaüstü StudioFlow ile aynıdır: önce anlatımın TAMAMI seslendirilir ve kelime zamanları çıkarılır,
+// sonra anlatım sahnelere bölünür (bkz. plan.js). Her sahne anlatımın bir kelime aralığıdır (`kb`–`ks`) ve
+// kendi ilk kelimesinin söylendiği anda başlar.
 import { ayar } from "./ayar.js";
 import { MODELLER as SES_MODELLERI } from "./gemini.js";
 import { MODELLER as GORSEL_MODELLERI } from "./cloudflare.js";
@@ -6,8 +10,12 @@ import { MODELLER as GORSEL_MODELLERI } from "./cloudflare.js";
 export const VARSAYILAN_STIL = "Natural, warm documentary narration with varied emphasis and a relaxed pace.";
 export const VARSAYILAN_GORSEL_STIL = "Photorealistic film still, shot on 35mm film, sharp focus, "
   + "natural skin texture, available light, high detail";
+export const VARSAYILAN_NEGATIF = "blurry, low quality, watermark, text, signature, deformed hands, "
+  + "extra fingers, extra limbs, distorted face";
 export const SES_PARCA_SINIRI = 1600;   // Gemini TTS isteği başına karakter (masaüstüyle aynı)
-const SAHNE_HEDEF = 120;                // sahne başına hedef karakter (~8 sn anlatım; LTX klibi en fazla 8 sn)
+export const KELIME_HIZI = 2.2;         // süre tahmini: saniyede kelime (~130 kelime/dk, Gemini TTS ölçümü)
+// Bir sahnenin süre aralığı (sn). Tavanı kullanıcı seçer (5–8); LTX tek seferde en fazla 8 sn üretir.
+export const SAHNE_ALT = 1, SAHNE_UST = 8, SAHNE_TAVAN_ALT = 5, SAHNE_TAVAN_VARSAYILAN = 6;
 const SESSIZ_HIZ = 14;                  // ses yokken süre tahmini: saniyede karakter
 
 export const kimlik = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -29,6 +37,7 @@ export function yeniProje() {
   return {
     id: kimlik(), ad: "Yeni proje", olusturma: Date.now(), guncelleme: Date.now(),
     konu: "", hedefSaniye: 60, senaryo: "",
+    genel: "", negatif: "", promptModel: "", sahneUst: SAHNE_TAVAN_VARSAYILAN, plan: null, sesParcalari: null,
     dil: ayar.dil || "tr", ses: ayar.ses || "Charon", model: ayar.model || SES_MODELLERI[0], stil: VARSAYILAN_STIL,
     gorselStili: VARSAYILAN_GORSEL_STIL, gorselModel: ayar.gorselModel || GORSEL_MODELLERI[0].kimlik, boyut: ayar.boyut || "720x1280",
     altyazi: false, hareketli: false, sahneler: [], sesSureleri: {}, sesZamanlari: {}, sesHiz: 0, sesTon: 0,
@@ -37,52 +46,42 @@ export function yeniProje() {
   };
 }
 
-export const yeniSahne = (metin = "") => ({
-  id: kimlik(), metin, prompt: "", hareket: "", gorselVar: false, gorselSurum: 0, videoVar: false, videoSurum: 0 });
+/** Sahne: anlatımın `kb`–`ks` kelime aralığı (`ks` dahil değil). */
+export const yeniSahne = (metin = "", kb = 0, ks = 0) => ({
+  id: kimlik(), metin, kb, ks, prompt: "", negatif: "", hareket: "", gorselVar: false, gorselSurum: 0, videoVar: false, videoSurum: 0 });
 
-function cumleler(paragraf) {
-  const sonuc = [];
-  const desen = /[^.!?…。！？]+[.!?…。！？]+["'”’)\]]*\s*|[^.!?…。！？]+$/g;
-  for (const es of paragraf.matchAll(desen)) {
-    const c = es[0].trim();
-    if (c) sonuc.push(c);
-  }
-  return sonuc;
+export const sozcukler = (metin) => String(metin || "").trim().split(/\s+/).filter(Boolean);
+
+/** Anlatımı cümlelere böler (`. ! ? …` ve satır sonları sınırdır). Kelimeler değişmez; noktalama metinde kalır. */
+export function cumlelereBol(metin) {
+  const duz = String(metin || "").split(/\n+/).map((s) => sozcukler(s).join(" ")).filter(Boolean);
+  return duz.flatMap((satir) => satir.split(/(?<=[.!?…。！？]["'”’)\]]*)\s+/)).map((c) => c.trim()).filter(Boolean);
 }
 
-/** Senaryoyu sahnelere böler: paragraf sınırı her zaman sahne sınırıdır, cümleler bölünmez. */
-export function sahnelereBol(senaryo, hedef = SAHNE_HEDEF) {
-  const sahneler = [];
-  for (const paragraf of (senaryo || "").split(/\n\s*\n|\r\n\s*\r\n/)) {
-    let biriken = "";
-    for (const cumle of cumleler(paragraf.replace(/\s+/g, " ").trim())) {
-      if (biriken && biriken.length + 1 + cumle.length > hedef) {
-        sahneler.push(biriken);
-        biriken = cumle;
-      } else {
-        biriken = biriken ? biriken + " " + cumle : cumle;
-      }
-    }
-    if (biriken) sahneler.push(biriken);
+/** Anlatımı seslendirme isteklerine böler: cümleler bölünmeden, istek başına `sinir` karakteri aşmadan. */
+export function anlatimParcalari(metin, sinir = SES_PARCA_SINIRI) {
+  const parcalar = [];
+  let gecerli = "";
+  const ekle = (birim) => {
+    if (gecerli && gecerli.length + 1 + birim.length > sinir) { parcalar.push(gecerli); gecerli = ""; }
+    gecerli += (gecerli ? " " : "") + birim;
+  };
+  for (const cumle of cumlelereBol(metin)) {
+    if (cumle.length <= sinir) ekle(cumle);
+    else for (const kelime of cumle.split(" ")) ekle(kelime);      // tek cümle sınırı aşıyorsa kelimelerden bölünür
   }
-  // Tek başına kalan çok kısa parça (ör. "Ama neden?") önceki sahneye eklenir.
-  const birlesik = [];
-  for (const s of sahneler) {
-    if (birlesik.length && s.length < 40 && birlesik[birlesik.length - 1].length + s.length <= hedef * 1.15) {
-      birlesik[birlesik.length - 1] += " " + s;
-    } else {
-      birlesik.push(s);
-    }
-  }
-  return birlesik.map((metin) => yeniSahne(metin));
+  if (gecerli) parcalar.push(gecerli);
+  return parcalar;
 }
+
+/** Seslendirilen (ya da seslendirilecek) anlatımın tamamı; kelimeleri sahnelerin `kb`–`ks` aralıklarının tabanıdır. */
+export const tamMetin = (proje) => (proje.sesParcalari?.length ? proje.sesParcalari : anlatimParcalari(proje.senaryo)).join(" ");
 
 /**
- * Seslendirme planı: art arda sahneler tek isteğe sığdığı kadar gruplanır.
- * Her parça `{ anahtar, metin, sahneler: [id…] }`; anahtar metin ve ses ayarlarından türetilir,
- * yani bir sahnenin metni değişince yalnızca o parça yeniden seslendirilir.
+ * Dublajın (ya da eski sürüm projelerin) ses planı: art arda sahneler tek isteğe sığdığı kadar gruplanır.
+ * Her parça `{ metin, sahneler: [id…], uzunluklar }`.
  */
-export function sesPlani(proje) {
+export function sahneParcalari(proje) {
   const parcalar = [];
   let gecerli = null;
   for (const sahne of proje.sahneler) {
@@ -96,24 +95,87 @@ export function sesPlani(proje) {
     gecerli.sahneler.push(sahne.id);
     gecerli.uzunluklar.push(metin.length);
   }
-  for (const p of parcalar) {
-    p.anahtar = ozet(JSON.stringify([p.metin, proje.dil, proje.ses, proje.model, proje.stil]));
+  return parcalar;
+}
+
+/**
+ * Seslendirme planı. Asıl anlatımda parçalar anlatımın kendisinden gelir (sahnelerden bağımsız; seslendirme
+ * başlayınca `proje.sesParcalari` olarak sabitlenir); dublajda sahne çevirileri gruplanır.
+ * Her parça `{ anahtar, metin, sahneler: [id…], … }`; anahtar metin ve ses ayarlarından türetilir, asıl
+ * anlatımda ayrıca `ilk`–`son` (anlatımdaki kelime aralığı) vardır.
+ */
+export function sesPlani(proje) {
+  let parcalar;
+  if (proje.asil) {
+    parcalar = sahneParcalari(proje);
+  } else {
+    let ilk = 0;
+    parcalar = (proje.sesParcalari?.length ? proje.sesParcalari : anlatimParcalari(proje.senaryo)).map((metin) => {
+      const n = sozcukler(metin).length;
+      const p = { metin, ilk, son: ilk + n, sahneler: (proje.sahneler || []).filter((s) => s.ks > ilk && s.kb < ilk + n).map((s) => s.id) };
+      ilk += n;
+      return p;
+    });
   }
+  for (const p of parcalar) p.anahtar = ozet(JSON.stringify([p.metin, proje.dil, proje.ses, proje.model, proje.stil]));
   return parcalar;
 }
 
 /** Konuşma hızı çarpanı: `sesHiz` yüzdesi (−30 … +30). Ses üretildikten sonra uygulanır; süreler buna bölünür. */
 export const hizCarpani = (proje) => Math.min(1.5, Math.max(0.6, 1 + (Number(proje.sesHiz) || 0) / 100));
-const kelimeSay = (metin) => (metin || "").trim().split(/\s+/).filter(Boolean).length;
 const HIZA_TAVAN = 1.3;        // sahneye sığdırırken dublajın en çok hızlandırılacağı kat
 const HIZA_SON_TAVAN = 1.6;    // son sahnede: video süresini aşmamak için
 
 /**
- * Görünümün kendi sesine göre sahne zamanları. Parçanın kelime zamanları varsa (`sesZamanlari`, whisper)
- * sahne sınırı sesteki gerçek yere oturur; yoksa parça süresi sahnelere karakter sayısıyla orantılı dağıtılır.
- * Ses hiç yoksa süre metin uzunluğundan tahmin edilir.
+ * Asıl anlatımın zamanlaması. Her ses parçasının kelime zamanları (`sesZamanlari`, whisper) varsa onlar,
+ * yoksa parça süresinin kelimelere harf sayısıyla dağıtılmış tahmini kullanılır. Sahne, ilk kelimesinin
+ * söylendiği anda başlar ve sonraki sahnenin ilk kelimesine kadar sürer; ilk sahne 0'dan başlar, son sahne
+ * sesin sonuna kadar sürer.
  */
-function kendiZamanlama(proje) {
+function asilZamanlama(proje) {
+  const plan = sesPlani(proje);
+  const sureler = proje.sesSureleri || {}, zamanlar = proje.sesZamanlari || {}, F = hizCarpani(proje);
+  const hazir = plan.filter((p) => sureler[p.anahtar] > 0).length;
+  const sesDurumu = !plan.length || hazir === 0 ? "yok" : hazir === plan.length ? "tam" : "eksik";
+  const kz = [];          // anlatımın bütün kelimeleri: [bas, bit]
+  let t = 0, zamanli = 0;
+  for (const p of plan) {
+    const s = sozcukler(p.metin);
+    const sure = (sesDurumu === "tam" ? sureler[p.anahtar] : p.metin.length / SESSIZ_HIZ) / F;
+    const z = sesDurumu === "tam" ? zamanlar[p.anahtar] : null;
+    if (Array.isArray(z) && z.length && z.length === 2 * s.length) {
+      zamanli++;
+      s.forEach((_, k) => kz.push([Math.min(t + sure, t + z[2 * k] / F), Math.min(t + sure, t + z[2 * k + 1] / F)]));
+    } else {
+      const harf = s.reduce((a, k) => a + k.length + 1, 0) || 1;
+      let u = t;
+      for (const k of s) { const d = sure * (k.length + 1) / harf; kz.push([u, u + d]); u += d; }
+    }
+    t += sure;
+  }
+  const toplam = t, liste = proje.sahneler || [];
+  const gecerli = (s) => s.ks > s.kb && s.ks <= kz.length;
+  const sahneler = new Map(), kelimeler = new Map();
+  let onceki = 0, ilkMi = true;
+  liste.forEach((s, i) => {
+    if (!gecerli(s)) { sahneler.set(s.id, { bas: onceki, bit: onceki }); return; }
+    const sonraki = liste.slice(i + 1).find(gecerli);
+    const bas = ilkMi ? 0 : Math.max(onceki, kz[s.kb][0]);
+    const bit = Math.max(bas, sonraki ? kz[sonraki.kb][0] : toplam);
+    sahneler.set(s.id, { bas, bit });
+    kelimeler.set(s.id, kz.slice(s.kb, s.ks));
+    onceki = bit;
+    ilkMi = false;
+  });
+  return { sahneler, kelimeler, toplam, sesDurumu, eksik: plan.length - hazir, parcaSayisi: plan.length,
+           zamanliParca: zamanli, kesin: sesDurumu === "tam" && zamanli === plan.length, kelimeZamanlari: kz };
+}
+
+/**
+ * Dublajın kendi sesine göre sahne zamanları. Parçanın kelime zamanları varsa sahne sınırı sesteki gerçek
+ * yere oturur; yoksa parça süresi sahnelere karakter sayısıyla orantılı dağıtılır.
+ */
+function dublajZamanlama(proje) {
   const plan = sesPlani(proje);
   const sureler = proje.sesSureleri || {}, zamanlar = proje.sesZamanlari || {}, F = hizCarpani(proje);
   const hazir = plan.filter((p) => sureler[p.anahtar] > 0).length;
@@ -123,7 +185,7 @@ function kendiZamanlama(proje) {
   for (const p of plan) {
     const toplam = p.uzunluklar.reduce((a, b) => a + b, 0);
     const parcaSuresi = (sesDurumu === "tam" ? sureler[p.anahtar] : toplam / SESSIZ_HIZ) / F;
-    const sayilar = p.sahneler.map((id) => kelimeSay(proje.sahneler.find((s) => s.id === id)?.metin));
+    const sayilar = p.sahneler.map((id) => sozcukler(proje.sahneler.find((s) => s.id === id)?.metin).length);
     const kz = sesDurumu === "tam" ? zamanlar[p.anahtar] : null;
     if (Array.isArray(kz) && kz.length && kz.length === 2 * sayilar.reduce((a, b) => a + b, 0)) {
       zamanli++;
@@ -150,9 +212,7 @@ function kendiZamanlama(proje) {
   const sahneler = new Map(), kelimeler = new Map();
   let t = 0;
   for (const sahne of proje.sahneler) {
-    // Metinsiz sahne (yalnızca görsel) sessiz videoda 3 sn görünür; sesli videoda yer almaz.
-    const s = sure.has(sahne.id) ? Math.max(sure.get(sahne.id), sesDurumu === "tam" ? 0 : 2.5)
-      : (sesDurumu === "tam" ? 0 : 3);
+    const s = sure.has(sahne.id) ? Math.max(sure.get(sahne.id), sesDurumu === "tam" ? 0 : 2.5) : 0;
     sahneler.set(sahne.id, { bas: t, bit: t + s });
     if (goreli.has(sahne.id)) kelimeler.set(sahne.id, goreli.get(sahne.id).map(([a, b]) => [t + a, t + b]));
     t += s;
@@ -164,17 +224,18 @@ function kendiZamanlama(proje) {
 /**
  * Sahne zamanları.
  * Döner: `{ sahneler: Map(id → { bas, bit }), kelimeler: Map(id → [[bas, bit], …]), toplam,
- *           sesDurumu: "tam" | "eksik" | "yok", eksik, parcaSayisi, zamanliParca, kesin, hiza }`.
- * `kesin`: bütün parçaların kelime zamanı var (altyazı sese oturuyor).
+ *           sesDurumu: "tam" | "eksik" | "yok", eksik, parcaSayisi, zamanliParca, kesin, kelimeZamanlari?, hiza? }`.
+ * `kesin`: bütün parçaların kelime zamanı var (sahneler ve altyazı sese oturuyor).
  *
  * "Sahnelere göre hizalı" dublajda (`proje.hizali`, bkz. `dilGorunumu`) sahneler asıl seslendirmenin zamanlarında
  * kalır; dublajın her sahnesi kendi sahnesinin başına yerleştirilir, sığmıyorsa hızlandırılır (`hiza`:
  * Map(id → { kaynakBas, kaynakBit, hedefBas, tempo })). Asıl ses ya da dublaj sesi tam değilse dublaj kendi zamanlarıyla kalır.
  */
 export function zamanlama(proje) {
-  const kendi = kendiZamanlama(proje);
-  if (!proje.hizali || !proje.asil) return kendi;
-  const asil = kendiZamanlama(proje.asil);
+  if (!proje.asil) return asilZamanlama(proje);
+  const kendi = dublajZamanlama(proje);
+  if (!proje.hizali) return kendi;
+  const asil = asilZamanlama(proje.asil);
   if (asil.sesDurumu !== "tam" || kendi.sesDurumu !== "tam") return kendi;
   const sesli = proje.sahneler.filter((s) => { const a = kendi.sahneler.get(s.id); return a.bit > a.bas; });
   const hiza = new Map(), kelimeler = new Map();
@@ -202,10 +263,10 @@ export function zamanlama(proje) {
  * arasına karakter sayısıyla orantılı dağıtılır (yaklaşık).
  */
 export function altyaziBloklari(metin, bas, bit, azami = 34, kelimeler = null) {
-  const sozcukler = (metin || "").trim().split(/\s+/).filter(Boolean);
+  const liste = sozcukler(metin);
   const bloklar = [];        // { metin, ilk, son }: kelime sıraları
   let satir = "", ilk = 0;
-  sozcukler.forEach((kelime, i) => {
+  liste.forEach((kelime, i) => {
     if (satir && satir.length + 1 + kelime.length > azami) {
       bloklar.push({ metin: satir, ilk, son: i - 1 });
       satir = kelime;
@@ -219,8 +280,8 @@ export function altyaziBloklari(metin, bas, bit, azami = 34, kelimeler = null) {
       ilk = i + 1;
     }
   });
-  if (satir) bloklar.push({ metin: satir, ilk, son: sozcukler.length - 1 });
-  if (kelimeler && kelimeler.length === sozcukler.length) {
+  if (satir) bloklar.push({ metin: satir, ilk, son: liste.length - 1 });
+  if (kelimeler && kelimeler.length === liste.length) {
     return bloklar.map((b) => ({ bas: kelimeler[b.ilk][0], bit: Math.max(kelimeler[b.ilk][0], kelimeler[b.son][1]), metin: b.metin, kesin: true }));
   }
   const toplam = bloklar.reduce((a, b) => a + b.metin.length, 0) || 1;
@@ -251,11 +312,11 @@ export function tumBloklar(gorunum, z = zamanlama(gorunum)) {
   return bloklar.filter((b) => b.bit > b.bas);
 }
 
-/** Görsel modeline giden son prompt: sahne tarifi + projenin stil katmanı. */
+/** Görsel modeline giden son prompt: sahne tarifi + projenin stil katmanı. Tarifi olmayan sahnede boştur. */
 export function gorselPromptu(proje, sahne) {
-  const tarif = (sahne.prompt || "").trim() || `Cinematic still frame illustrating: ${(sahne.metin || "").trim()}`;
+  const tarif = (sahne.prompt || "").trim();
   const stil = (proje.gorselStili || "").trim();
-  return stil ? `${tarif.replace(/[.\s]+$/, "")}. ${stil}` : tarif;
+  return tarif && stil ? `${tarif.replace(/[.\s]+$/, "")}. ${stil}` : tarif;
 }
 
 /** Biçime göre varsayılan görsel üretim boyutu (dikey / yatay), masaüstündeki ölçüyle. */
