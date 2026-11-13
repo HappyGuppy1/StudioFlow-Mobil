@@ -509,6 +509,9 @@ export async function projeGorunumu(kok, id, kabuk) {
 
   // Video prompt'u olmayan sahnenin videosu üretilmez (genel bir hareketle doldurulmaz).
   const klipBekleyenler = () => P.sahneler.filter((s) => s.gorselVar && !s.videoVar && s.metin.trim() && (s.hareket || "").trim());
+  /** Hiçbir şey üretilmemiş proje (masaüstündeki "taslak"): ana düğme "Projeyi başlat" der. */
+  const taslakMi = () => !P.sahneler.length && !Object.values(P.sesSureleri).some((sure) => sure > 0);
+  const devamEtiketi = () => (taslakMi() ? "▶ Projeyi başlat" : "▶ Kaldığın yerden devam et");
   /** Bütün kareler hazır, videolar görsel onayını bekliyor mu? */
   const onayBekliyor = () => P.gorselOnay !== "VERİLDİ" && klipBekleyenler().length > 0 && P.sahneler.every((s) => s.gorselVar || !s.metin.trim());
   const nolar = (liste) => liste.map((s) => P.sahneler.indexOf(s) + 1).join(", ");
@@ -548,8 +551,9 @@ export async function projeGorunumu(kok, id, kabuk) {
   const tumunuUret = () => {
     if (is.calisiyor) return;
     if (!P.senaryo.trim() && !P.sahneler.length) { panel = "metin"; cizPanel(); return alert("Önce Metin bölümüne anlatım metnini yaz."); }
-    if (!confirm("Kaldığın yerden devam edilsin mi?\n\nSırayla eksik olanlar üretilir: seslendirme → kelime zamanlaması → sahne planı → görsel"
-      + (P.hareketli ? " ve video" : "") + " prompt'ları → görseller" + (Object.keys(P.diller).length ? " → dublajlar" : "") + ". Hazır olanlara dokunulmaz. Kota harcar."
+    if (!confirm((taslakMi() ? "Proje başlatılsın mı?\n\nSırayla üretilir: seslendirme" : "Kaldığın yerden devam edilsin mi?\n\nSırayla eksik olanlar üretilir: seslendirme")
+      + " → kelime zamanlaması → sahne planı → görsel"
+      + (P.hareketli ? " ve video" : "") + " prompt'ları → görseller" + (Object.keys(P.diller).length ? " → dublajlar" : "") + (taslakMi() ? ". Kota harcar." : ". Hazır olanlara dokunulmaz. Kota harcar.")
       + (P.gorselOnay !== "VERİLDİ" ? "\n\nKareler bitince durur; videolar sen kareleri onayladıktan sonra üretilir." : "\n\nGörseller onaylı: eksik sahne videoları da üretilir."))) return;
     return calistir(tumunuIsi);
   };
@@ -904,7 +908,7 @@ export async function projeGorunumu(kok, id, kabuk) {
   function sahnelerPaneli() {
     if (!P.sahneler.length) {
       return [h("h2", null, "Sahneler"),
-              aciklama("Henüz sahne yok. Sahneler seslendirmeden sonra kurulur: Metin bölümüne anlatımı yaz, sonra “Kaldığın yerden devam et”e bas. "
+              aciklama("Henüz sahne yok. Sahneler seslendirmeden sonra kurulur: Metin bölümüne anlatımı yaz, sonra “Projeyi başlat”a bas. "
                 + "Önce anlatım seslendirilir, sonra yapay zekâ onu sahnelere böler ve her sahneyi sesteki yerine oturtur."),
               h("button", { class: "dugme kucuk", onclick: () => { panel = "metin"; cizPanel(); } }, "Metne git")];
     }
@@ -987,7 +991,7 @@ export async function projeGorunumu(kok, id, kabuk) {
         satir("Görsel onayı", onayli ? "VERİLDİ" : "BEKLİYOR", { "data-onay": "" }),
         satir("Video servisi", "LTX-2.3 · Hugging Face")),
       h("div", { class: "dugme-satiri" },
-        h("button", { class: "dugme birincil genis-dugme is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, "▶ Kaldığın yerden devam et")),
+        h("button", { class: "dugme birincil genis-dugme is-dugme", disabled: is.calisiyor, onclick: tumunuUret }, devamEtiketi())),
       onayli && tamam < n ? h("div", { class: "dugme-satiri" },
         h("button", { class: "dugme kucuk is-dugme", disabled: is.calisiyor, onclick: () => { P.gorselOnay = "BEKLİYOR"; kaydet(); cizPanel(); } }, "Görsel onayını geri al")) : null,
       grup("Adımlar · üretim sırasıyla",
@@ -1041,7 +1045,7 @@ export async function projeGorunumu(kok, id, kabuk) {
             adim("Gemini anlatımı yazıyor…");
             P.senaryo = await metinAI.senaryoYaz({ anahtar: hesapla("gemini"), konu: P.konu, dil: P.dil, saniye: Number(P.hedefSaniye) || 60 });
             P.sesParcalari = null;
-            return "Anlatım yazıldı. Okuyup düzelt, sonra “Kaldığın yerden devam et”e bas.";
+            return "Anlatım yazıldı. Okuyup düzelt, sonra “Projeyi başlat”a bas.";
           });
         } }, "Anlatımı Gemini yazsın"),
         aciklama("Dil, Seslendirme bölümünden seçilir.")),
@@ -1663,7 +1667,7 @@ export async function projeGorunumu(kok, id, kabuk) {
          `${P.sahneler.filter((s) => s.videoVar).length} video`, ses, sureYaz(z.toplam)].filter(Boolean).join(" · ")
       : "";
     uretDugmesi.disabled = is.calisiyor;
-    uretDugmesi.textContent = onayBekliyor() ? "✅ Onayla · videoları üret" : "▶ Kaldığın yerden devam et";
+    uretDugmesi.textContent = onayBekliyor() ? "✅ Onayla · videoları üret" : devamEtiketi();
   }
 
   const PANELLER = {
