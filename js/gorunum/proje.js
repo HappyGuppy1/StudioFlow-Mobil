@@ -4,7 +4,7 @@
 // başında 👁 göz (önizlemede görünsün/duyulsun) ve ☑ işaret (dışa aktarılan videoya girsin) vardır.
 import { h, secenekler, durumYaz, geciktir, ekranAcik, sureYaz } from "../dom.js";
 import * as depo from "../depo.js";
-import { ayar, ayarGuncelle, ltxSpaceleri } from "../ayar.js";
+import { ayar, ayarGuncelle } from "../ayar.js";
 import * as havuz from "../hesap.js";
 import * as ltx from "../video_ltx.js";
 import * as gemini from "../gemini.js";
@@ -432,11 +432,22 @@ export async function projeGorunumu(kok, id, kabuk) {
     const zaman = zamanlama(P).sahneler.get(sahne.id);
     const sahneSuresi = zaman ? zaman.bit - zaman.bas : 0;
     const kare = await ltxKaresi(kayit);
-    const klip = await hesapla("huggingface")((hesap) => ltx.videoUret({
-      token: hesap.hf_token, spaceler: ltxSpaceleri(), erisim: ayar.ltxErisim || "",
-      gorsel: kare, prompt: sahne.hareket, dikey: dikeyMi(),
-      sure: Math.min(ltx.SURE_UST, Math.max(2, Math.ceil((sahneSuresi || 5) * 2) / 2)),
-      bildir, iptal: () => is.iptal }));
+    // Nedeni belli olmayan hata üst üste üç hesapta yinelenirse sorun hesapta değil Space'tedir: durulur.
+    let belirsiz = 0;
+    const klip = await hesapla("huggingface")(async (hesap) => {
+      try {
+        return await ltx.videoUret({
+          token: hesap.hf_token,          // video her zaman genel LTX Space'inde (Lightricks/LTX-2-3) üretilir
+          gorsel: kare, prompt: sahne.hareket, dikey: dikeyMi(),
+          sure: Math.min(ltx.SURE_UST, Math.max(2, Math.ceil((sahneSuresi || 5) * 2) / 2)),
+          bildir, iptal: () => is.iptal });
+      } catch (hata) {
+        if (hata.belirsiz && ++belirsiz >= 3) {
+          throw new Error(`Sahne ${P.sahneler.indexOf(sahne) + 1} videosu üç ayrı Hugging Face hesabıyla üretilemedi (${hata.message}) Space şu an çalışmıyor olabilir; biraz sonra “Kaldığın yerden devam et”e bas. Üretilen videolar kayıtlı.`);
+        }
+        throw hata;
+      }
+    });
     await depo.dosyalar.yaz(depo.videoAnahtari(P.id, sahne.id), { veri: await klip.arrayBuffer(), tur: "video/mp4" });
     sahne.videoVar = true;
     sahne.videoSurum = (sahne.videoSurum || 0) + 1;

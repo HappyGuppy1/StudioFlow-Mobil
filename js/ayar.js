@@ -5,7 +5,7 @@ function oku() {
   try { return JSON.parse(localStorage.getItem(ANAHTAR)) || {}; } catch { return {}; }
 }
 
-/** Geçerli ayarlar (yerinde güncellenir). Alanlar: kasaAdres, kasaParola, ltxSpaceler, ltxErisim, dil, ses, model… (API anahtarları telefonda durmaz; kasadadır.) */
+/** Geçerli ayarlar (yerinde güncellenir). Alanlar: kasaAdres, kasaParola, dil, ses, model… (API anahtarları telefonda durmaz; kasadadır.) */
 export const ayar = oku();
 
 /** Değişiklikleri uygular ve kaydeder; boş değerli alanlar silinir. Kaydedilemezse `false`. */
@@ -17,4 +17,3 @@ export function ayarGuncelle(degisiklik) {
   try { localStorage.setItem(ANAHTAR, JSON.stringify(ayar)); return true; } catch { return false; }
 }
 
-export const ltxSpaceleri = () => (ayar.ltxSpaceler || "").split(/[\s,;]+/).filter(Boolean);

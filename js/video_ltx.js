@@ -35,6 +35,9 @@ function hataDuzenle(metin, space) {
 /** Hata nesnesi: hesabın GPU kotası dolduysa `tur: "kota"`, token reddedildiyse `tur: "yetki"` (hesap havuzu sıradakine geçer). */
 function ltxHatasi(metin, space) {
   const mesaj = hataDuzenle(metin, space);
+  // ZeroGPU, hesabın GPU süresi yetmeyince çoğu kez ayrıntısız hata verir: hesap bekletilir ve sıradaki hesap denenir
+  // (`belirsiz`: neden kesin değil; üst üste yinelenirse çağıran durur, bütün hesaplar boşa harcanmaz).
+  if (/ayrıntı vermedi/.test(mesaj)) return hataKur(mesaj, { tur: "kota", bekleme: 1800, belirsiz: true });
   return hataKur(mesaj, /kotası doldu/.test(mesaj) ? { tur: "kota" } : /reddedildi/.test(mesaj) ? { tur: "yetki" } : {});
 }
 
@@ -148,7 +151,7 @@ async function tekSpace({ space, erisim, token, gorsel, prompt, sure, dikey, bil
   if (hata) throw hata;
   const bulunan = urlBul(sonuc);
   // Ölçüldü (masaüstü): GPU süresi yetmeyince Space hata değil boş sonuç döndürür.
-  if (!bulunan) throw hataKur(`LTX video döndürmedi (${space}): hesabın GPU kotası yetmemiş olabilir.`, { tur: "kota", bekleme: 1800 });
+  if (!bulunan) throw hataKur(`LTX video döndürmedi (${space}): hesabın GPU kotası yetmemiş olabilir.`, { tur: "kota", bekleme: 1800, belirsiz: true });
   const adres = typeof bulunan === "string" ? bulunan : `${kok}/gradio_api/file=${bulunan.yol}`;
   bildir?.("LTX · klip indiriliyor…");
   let dosya;

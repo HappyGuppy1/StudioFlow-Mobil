@@ -209,24 +209,7 @@ export async function apiGorunumu(kok, kabuk) {
         havuz.hizmetOzeti(hizmet).bekleyen ? h("div", { class: "satir" },
           h("button", { class: "dugme kucuk", onclick: () => { havuz.kotaTemizle(hizmet); ciz(); } }, "Kota beklemelerini sıfırla")) : null),
     ];
-    if (hizmet === "huggingface") kartlar.push(ltxKarti());
     return kartlar;
-  }
-
-  function ltxKarti() {
-    const durum = h("p", { class: "durum", role: "status" });
-    const spaceler = girdi("text", ayar.ltxSpaceler, "kullanici/space-adi");
-    const erisim = girdi("text", ayar.ltxErisim);
-    return h("section", { class: "kart" },
-      h("h2", null, "Kendi LTX Space'in (isteğe bağlı)"),
-      h("p", { class: "soluk" }, "Boş bırakırsan resmî LTX Space'i kullanılır. Kendi kopyan varsa adını ve erişim anahtarını yaz; birden çoksa virgülle ayır."),
-      h("label", null, "Space adları", spaceler),
-      h("label", null, "Erişim anahtarı", erisim),
-      h("div", { class: "satir" }, h("button", { class: "dugme", onclick: () => {
-        const oldu = ayarGuncelle({ ltxSpaceler: spaceler.value.trim(), ltxErisim: erisim.value.trim() });
-        durumYaz(durum, oldu ? "Kaydedildi." : "Kaydedilemedi: tarayıcı depolamayı engelliyor.", oldu ? "tamam" : "hata");
-      } }, "Kaydet")),
-      durum);
   }
 
   // ── İskelet ─────────────────────────────────────────────────────────────────
